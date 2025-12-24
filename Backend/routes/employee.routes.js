@@ -7,7 +7,7 @@ import {
   deleteEmployee,
   getEmployeeById,
 } from "../controllers/employee.controller.js";
-
+import { extractText } from "../controllers/textExtraction.js";
 const router = express.Router();
 
 router.get("/", getEmployees);
@@ -16,5 +16,5 @@ router.post("/", upload.array("files", 5), createEmployee);
 router.put("/:id", upload.array("files", 5), updateEmployee);
 
 router.delete("/:id", deleteEmployee);
-
+router.post("/extract-text", extractText);
 export default router;

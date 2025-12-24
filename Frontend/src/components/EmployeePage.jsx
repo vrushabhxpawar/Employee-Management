@@ -18,7 +18,10 @@ const EmployeePage = () => {
   });
 
   const [viewFile, setViewFile] = useState(null);
+  const [extractedText, setExtractedText] = useState("");
+  const [isExtracting, setIsExtracting] = useState(false);
 
+  /* ---------------- FETCH ---------------- */
   const fetchEmployees = async () => {
     try {
       const res = await axios.get(API_URL);
@@ -32,6 +35,7 @@ const EmployeePage = () => {
     fetchEmployees();
   }, []);
 
+  /* ---------------- VALIDATION ---------------- */
   const validate = () => {
     if (!form.name.trim()) {
       alert("Name is required");
@@ -64,6 +68,7 @@ const EmployeePage = () => {
     return true;
   };
 
+  /* ---------------- INPUT HANDLERS ---------------- */
   const handleChange = (e) => {
     const { name, value } = e.target;
     setForm((prev) => ({ ...prev, [name]: value }));
@@ -75,6 +80,7 @@ const EmployeePage = () => {
     e.target.value = ""; // Reset input
   };
 
+  /* ---------------- REMOVE FILE ---------------- */
   const handleRemoveFile = (index) => {
     setSelectedFiles((prev) => prev.filter((_, i) => i !== index));
   };
@@ -84,6 +90,7 @@ const EmployeePage = () => {
     setFilesToKeep((prev) => prev.filter((_, i) => i !== index));
   };
 
+  /* ---------------- SUBMIT ---------------- */
   const handleSubmit = async (e) => {
     e.preventDefault();
     if (!validate()) return;
@@ -93,10 +100,12 @@ const EmployeePage = () => {
     data.append("email", form.email);
     data.append("phone", form.phone);
 
+    // Add new files
     selectedFiles.forEach((file) => {
       data.append("files", file);
     });
 
+    // Add existing files to keep (for edit mode)
     if (editId) {
       data.append("existingFiles", JSON.stringify(filesToKeep));
     }
@@ -122,6 +131,7 @@ const EmployeePage = () => {
     }
   };
 
+  /* ---------------- EDIT ---------------- */
   const handleEdit = (emp) => {
     setEditId(emp._id);
     setForm({
@@ -134,6 +144,7 @@ const EmployeePage = () => {
     setFilesToKeep(emp.files || []);
   };
 
+  /* ---------------- DELETE ---------------- */
   const handleDelete = async (id) => {
     if (!confirm("Delete this employee?")) return;
     
@@ -147,6 +158,7 @@ const EmployeePage = () => {
     }
   };
 
+  /* ---------------- RESET ---------------- */
   const resetForm = () => {
     setEditId(null);
     setForm({ name: "", email: "", phone: "" });
@@ -155,6 +167,28 @@ const EmployeePage = () => {
     setFilesToKeep([]);
   };
 
+  /* ---------------- EXTRACT TEXT FROM FILE ---------------- */
+  const handleExtractText = async (fileUrl, isPdf) => {
+    setIsExtracting(true);
+    setExtractedText("");
+
+    try {
+      // Send file URL to backend for text extraction
+      const response = await axios.post(`${API_URL}/extract-text`, {
+        fileUrl: fileUrl,
+        fileType: isPdf ? 'pdf' : 'image'
+      });
+
+      setExtractedText(response.data.text || "No text could be extracted from this file.");
+    } catch (error) {
+      console.error("Error extracting text:", error);
+      setExtractedText("Error: Unable to extract text from this file. " + (error.response?.data?.message || ""));
+    } finally {
+      setIsExtracting(false);
+    }
+  };
+
+  /* ---------------- RENDER FILE PREVIEW ---------------- */
   const renderFilePreview = (file, index, isExisting = false) => {
     const fileUrl = isExisting ? file.url : URL.createObjectURL(file);
     const fileName = isExisting ? file.url.split("/").pop() : file.name;
@@ -199,6 +233,7 @@ const EmployeePage = () => {
         Employee Management
       </h1>
 
+      {/* ---------------- FILE VIEWER MODAL ---------------- */}
       {viewFile && (
         <div 
           className="fixed inset-0 bg-black bg-opacity-75 z-50 flex items-center justify-center p-4"
@@ -210,84 +245,141 @@ const EmployeePage = () => {
           >
             <div className="bg-gray-800 text-white p-4 flex justify-between items-center">
               <h3 className="text-lg font-semibold">File Viewer</h3>
-              <button
-                onClick={() => setViewFile(null)}
-                className="text-white hover:text-gray-300 text-2xl font-bold"
-              >
-                ×
-              </button>
+              <div className="flex items-center gap-2">
+                <button
+                  onClick={() => {
+                    setExtractedText("");
+                    handleExtractText(viewFile.url, viewFile.isPdf);
+                  }}
+                  disabled={isExtracting}
+                  className="bg-green-600 hover:bg-green-700 px-4 py-2 rounded text-sm font-medium disabled:bg-gray-500"
+                >
+                  {isExtracting ? "Extracting..." : "Extract Text"}
+                </button>
+                <button
+                  onClick={() => {
+                    setViewFile(null);
+                    setExtractedText("");
+                  }}
+                  className="text-white hover:text-gray-300 text-2xl font-bold"
+                >
+                  ×
+                </button>
+              </div>
             </div>
             <div className="p-4 overflow-auto max-h-[calc(90vh-80px)]">
-              {viewFile.isPdf ? (
-                <div className="space-y-4">
-                  <object
-                    data={viewFile.url}
-                    type="application/pdf"
-                    className="w-full h-[70vh] border rounded"
-                  >
-                    <div className="flex flex-col items-center justify-center h-[70vh] bg-gray-100 rounded">
-                      <svg className="w-16 h-16 text-gray-400 mb-4" fill="currentColor" viewBox="0 0 20 20">
-                        <path fillRule="evenodd" d="M4 4a2 2 0 012-2h4.586A2 2 0 0112 2.586L15.414 6A2 2 0 0116 7.414V16a2 2 0 01-2 2H6a2 2 0 01-2-2V4zm2 6a1 1 0 011-1h6a1 1 0 110 2H7a1 1 0 01-1-1zm1 3a1 1 0 100 2h6a1 1 0 100-2H7z" clipRule="evenodd" />
-                      </svg>
-                      <p className="text-gray-600 mb-4">PDF cannot be displayed in browser</p>
-                      <a
-                        href={viewFile.url}
-                        download
-                        className="bg-blue-600 text-white px-6 py-2 rounded hover:bg-blue-700"
+              <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+                {/* FILE PREVIEW */}
+                <div>
+                  {viewFile.isPdf ? (
+                    <div className="space-y-4">
+                      <object
+                        data={viewFile.url}
+                        type="application/pdf"
+                        className="w-full h-[60vh] border rounded"
                       >
-                        Download PDF
-                      </a>
+                        <div className="flex flex-col items-center justify-center h-[60vh] bg-gray-100 rounded">
+                          <svg className="w-16 h-16 text-gray-400 mb-4" fill="currentColor" viewBox="0 0 20 20">
+                            <path fillRule="evenodd" d="M4 4a2 2 0 012-2h4.586A2 2 0 0112 2.586L15.414 6A2 2 0 0116 7.414V16a2 2 0 01-2 2H6a2 2 0 01-2-2V4zm2 6a1 1 0 011-1h6a1 1 0 110 2H7a1 1 0 01-1-1zm1 3a1 1 0 100 2h6a1 1 0 100-2H7z" clipRule="evenodd" />
+                          </svg>
+                          <p className="text-gray-600 mb-4">PDF cannot be displayed in browser</p>
+                          <a
+                            href={viewFile.url}
+                            download
+                            className="bg-blue-600 text-white px-6 py-2 rounded hover:bg-blue-700"
+                          >
+                            Download PDF
+                          </a>
+                        </div>
+                      </object>
+                      <div className="flex gap-2 justify-center">
+                        <a
+                          href={viewFile.url}
+                          download
+                          className="bg-blue-600 text-white px-4 py-2 rounded hover:bg-blue-700 text-sm"
+                        >
+                          Download
+                        </a>
+                        <a
+                          href={viewFile.url}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="bg-gray-600 text-white px-4 py-2 rounded hover:bg-gray-700 text-sm"
+                        >
+                          Open in Tab
+                        </a>
+                      </div>
                     </div>
-                  </object>
-                  <div className="flex gap-2 justify-center">
-                    <a
-                      href={viewFile.url}
-                      download
-                      className="bg-blue-600 text-white px-6 py-2 rounded hover:bg-blue-700"
-                    >
-                      Download PDF
-                    </a>
-                    <a
-                      href={viewFile.url}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      className="bg-gray-600 text-white px-6 py-2 rounded hover:bg-gray-700"
-                    >
-                      Open in New Tab
-                    </a>
+                  ) : (
+                    <div className="flex flex-col items-center">
+                      <img
+                        src={viewFile.url}
+                        alt="File preview"
+                        className="max-w-full max-h-[60vh] object-contain rounded border"
+                      />
+                      <div className="mt-4 flex gap-2">
+                        <a
+                          href={viewFile.url}
+                          download
+                          className="bg-blue-600 text-white px-4 py-2 rounded hover:bg-blue-700 text-sm"
+                        >
+                          Download
+                        </a>
+                        <a
+                          href={viewFile.url}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="bg-gray-600 text-white px-4 py-2 rounded hover:bg-gray-700 text-sm"
+                        >
+                          Open in Tab
+                        </a>
+                      </div>
+                    </div>
+                  )}
+                </div>
+
+                {/* EXTRACTED TEXT */}
+                <div className="border rounded p-4 bg-gray-50">
+                  <div className="flex justify-between items-center mb-3">
+                    <h4 className="font-semibold text-gray-700">Extracted Text</h4>
+                    {extractedText && (
+                      <button
+                        onClick={() => {
+                          navigator.clipboard.writeText(extractedText);
+                          alert("Text copied to clipboard!");
+                        }}
+                        className="text-sm bg-blue-600 text-white px-3 py-1 rounded hover:bg-blue-700"
+                      >
+                        Copy Text
+                      </button>
+                    )}
+                  </div>
+                  <div className="bg-white border rounded p-3 max-h-[55vh] overflow-auto">
+                    {isExtracting ? (
+                      <div className="flex items-center justify-center py-8">
+                        <div className="text-center">
+                          <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600 mx-auto mb-3"></div>
+                          <p className="text-gray-600">Extracting text...</p>
+                        </div>
+                      </div>
+                    ) : extractedText ? (
+                      <pre className="whitespace-pre-wrap text-sm text-gray-700 font-mono">
+                        {extractedText}
+                      </pre>
+                    ) : (
+                      <p className="text-gray-400 text-center py-8">
+                        Click "Extract Text" button to extract text from this file
+                      </p>
+                    )}
                   </div>
                 </div>
-              ) : (
-                <div className="flex flex-col items-center">
-                  <img
-                    src={viewFile.url}
-                    alt="File preview"
-                    className="max-w-full max-h-[70vh] object-contain rounded"
-                  />
-                  <div className="mt-4 flex gap-2">
-                    <a
-                      href={viewFile.url}
-                      download
-                      className="bg-blue-600 text-white px-6 py-2 rounded hover:bg-blue-700"
-                    >
-                      Download Image
-                    </a>
-                    <a
-                      href={viewFile.url}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      className="bg-gray-600 text-white px-6 py-2 rounded hover:bg-gray-700"
-                    >
-                      Open in New Tab
-                    </a>
-                  </div>
-                </div>
-              )}
+              </div>
             </div>
           </div>
         </div>
       )}
 
+      {/* ---------------- FORM ---------------- */}
       <div className="max-w-md mx-auto bg-white p-6 rounded-lg shadow-md mb-6">
         <h2 className="text-xl font-semibold mb-4 text-gray-700">
           {editId ? "Edit Employee" : "Add Employee"}
@@ -348,6 +440,7 @@ const EmployeePage = () => {
             />
           </div>
 
+          {/* EXISTING FILES (in edit mode) */}
           {existingFiles.length > 0 && (
             <div>
               <h3 className="text-sm font-medium text-gray-700 mb-2">
@@ -361,6 +454,7 @@ const EmployeePage = () => {
             </div>
           )}
 
+          {/* NEW FILES */}
           {selectedFiles.length > 0 && (
             <div>
               <h3 className="text-sm font-medium text-gray-700 mb-2">
@@ -395,6 +489,7 @@ const EmployeePage = () => {
         </form>
       </div>
 
+      {/* ---------------- LIST ---------------- */}
       <div className="max-w-5xl mx-auto bg-white rounded-lg shadow-md overflow-hidden">
         <div className="p-4 bg-gray-50 border-b">
           <h2 className="text-xl font-semibold text-gray-700">Employees List</h2>
