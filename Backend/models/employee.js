@@ -2,25 +2,14 @@ import mongoose from "mongoose";
 
 const employeeSchema = new mongoose.Schema(
   {
-    name: {
-      type: String,
-      required: true,
-    },
-    email: {
-      type: String,
-      required: true,
-      lowercase: true,
-      trim: true,
-      unique: true,
-    },
-    phone: {
-      type: String,
-      required: true,
-    },
+    name: { type: String, required: true },
+    email: { type: String, required: true, unique: true },
+    phone: { type: String, required: true },
     files: [
       {
-        url: { type: String, required: true },
-        publicId: { type: String },
+        url: String,
+        filename: String,
+        path: String,
       },
     ],
   },

@@ -1,5 +1,5 @@
 import express from "express";
-import upload from "../middlewares/upload.js";
+import {upload} from "../middlewares/upload.js";
 import {
   createEmployee,
   getEmployees,

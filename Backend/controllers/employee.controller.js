@@ -1,13 +1,10 @@
 import Employee from "../models/employee.js";
 import asyncHandler from "../middlewares/asyncHandler.js";
-import { uploadOnCloudinary } from "../util/cloudinary.js";
-import { v2 as cloudinary } from "cloudinary";
 
-/* helpers */
+
 const isValidEmail = (email) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email);
 const isValidPhone = (phone) => /^[0-9]{10}$/.test(phone);
 
-/* ================= CREATE ================= */
 export const createEmployee = asyncHandler(async (req, res) => {
   const { name, email, phone } = req.body;
 
@@ -32,17 +29,14 @@ export const createEmployee = asyncHandler(async (req, res) => {
       .json({ success: false, message: "Email already exists" });
   }
 
+  // Store files locally instead of Cloudinary
   let files = [];
-  console.log(req.files);
   for (const file of req.files) {
-    const uploaded = await uploadOnCloudinary(file.path);
-    console.log(uploaded);
-    if (uploaded) {
-      files.push({
-        url: uploaded.secure_url,
-        publicId: uploaded.public_id,
-      });
-    }
+    files.push({
+      url: `${req.protocol}://${req.get('host')}/uploads/${file.filename}`,
+      filename: file.filename,
+      path: file.path
+    });
   }
 
   const employee = await Employee.create({
@@ -55,13 +49,11 @@ export const createEmployee = asyncHandler(async (req, res) => {
   res.status(201).json({ success: true, data: employee });
 });
 
-/* ================= READ ALL ================= */
 export const getEmployees = asyncHandler(async (req, res) => {
   const employees = await Employee.find().sort({ createdAt: -1 });
   res.status(200).json({ success: true, data: employees });
 });
 
-/* ================= READ ONE ================= */
 export const getEmployeeById = asyncHandler(async (req, res) => {
   const employee = await Employee.findById(req.params.id);
   if (!employee) {
@@ -72,9 +64,8 @@ export const getEmployeeById = asyncHandler(async (req, res) => {
   res.status(200).json({ success: true, data: employee });
 });
 
-/* ================= UPDATE ================= */
 export const updateEmployee = asyncHandler(async (req, res) => {
-  const { name, email, phone } = req.body;
+  const { name, email, phone, existingFiles } = req.body;
 
   if (!name || !email || !phone) {
     return res
@@ -107,11 +98,38 @@ export const updateEmployee = asyncHandler(async (req, res) => {
       .json({ success: false, message: "Email already exists" });
   }
 
+  // Parse existing files to keep
+  let filesToKeep = [];
+  if (existingFiles) {
+    try {
+      filesToKeep = JSON.parse(existingFiles);
+    } catch (e) {
+      filesToKeep = [];
+    }
+  }
+
+  // Delete removed files from Cloudinary
+  const filesToDelete = employee.files.filter(
+    (file) => !filesToKeep.some((kept) => kept.publicId === file.publicId)
+  );
+
+  for (const file of filesToDelete) {
+    try {
+      await cloudinary.uploader.destroy(file.publicId);
+    } catch (error) {
+      console.error("Error deleting file from cloudinary:", error);
+    }
+  }
+
+  // Start with files to keep
+  let updatedFiles = [...filesToKeep];
+
+  // Add new uploaded files
   if (req.files && req.files.length > 0) {
     for (const file of req.files) {
       const uploaded = await uploadOnCloudinary(file.path);
       if (uploaded) {
-        employee.files.push({
+        updatedFiles.push({
           url: uploaded.secure_url,
           publicId: uploaded.public_id,
         });
@@ -122,29 +140,19 @@ export const updateEmployee = asyncHandler(async (req, res) => {
   employee.name = name;
   employee.email = email;
   employee.phone = phone;
+  employee.files = updatedFiles;
 
   await employee.save();
 
   res.status(200).json({ success: true, data: employee });
 });
 
-/* ================= DELETE ================= */
 export const deleteEmployee = asyncHandler(async (req, res) => {
   const employee = await Employee.findById(req.params.id);
   if (!employee) {
     return res
       .status(404)
       .json({ success: false, message: "Employee not found" });
-  }
-
-  if (Array.isArray(employee.files)) {
-    for (const file of employee.files) {
-      if (file.publicId) {
-        await cloudinary.uploader.destroy(file.publicId, {
-          resource_type: "auto",
-        });
-      }
-    }
   }
 
   await employee.deleteOne();
