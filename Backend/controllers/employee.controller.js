@@ -1,6 +1,9 @@
 import Employee from "../models/employee.js";
 import asyncHandler from "../middlewares/asyncHandler.js";
 
+import fs from "fs";
+import path from "path";
+import { fileURLToPath } from "url";
 
 const isValidEmail = (email) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email);
 const isValidPhone = (phone) => /^[0-9]{10}$/.test(phone);
@@ -33,9 +36,9 @@ export const createEmployee = asyncHandler(async (req, res) => {
   let files = [];
   for (const file of req.files) {
     files.push({
-      url: `${req.protocol}://${req.get('host')}/uploads/${file.filename}`,
+      url: `${req.protocol}://${req.get("host")}/uploads/${file.filename}`,
       filename: file.filename,
-      path: file.path
+      path: file.path,
     });
   }
 
@@ -147,12 +150,31 @@ export const updateEmployee = asyncHandler(async (req, res) => {
   res.status(200).json({ success: true, data: employee });
 });
 
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+
+const FS = fs.promises;
 export const deleteEmployee = asyncHandler(async (req, res) => {
   const employee = await Employee.findById(req.params.id);
+  
   if (!employee) {
-    return res
-      .status(404)
-      .json({ success: false, message: "Employee not found" });
+    return res.status(404).json({ success: false, message: "Employee not found" });
+  }
+
+  // Delete files
+  if (employee.files && employee.files.length > 0) {
+    for (const file of employee.files) {
+      try {
+        const filename = file.url.split('/').pop();
+        // Use process.cwd() to get project root, then navigate to uploads
+        const filePath = path.join(process.cwd(), 'uploads', filename);
+        console.log(`Attempting to delete: ${filePath}`);
+        await FS.unlink(filePath);
+        console.log(`Deleted file: ${filename}`);
+      } catch (fileError) {
+        console.error(`Error deleting file:`, fileError.message);
+      }
+    }
   }
 
   await employee.deleteOne();

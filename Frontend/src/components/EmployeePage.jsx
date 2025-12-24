@@ -1,5 +1,10 @@
 import { useEffect, useState } from "react";
 import axios from "axios";
+import { 
+  User, Mail, Phone, Upload, X, Edit2, Trash2, 
+  FileText, Download, ExternalLink, 
+  Copy, CheckCircle, Loader2, Search, Plus, AlertCircle
+} from "lucide-react";
 
 const API_BASE = import.meta.env.VITE_API_URL;
 const API_URL = `${API_BASE}/api/employees`;
@@ -10,6 +15,7 @@ const EmployeePage = () => {
   const [selectedFiles, setSelectedFiles] = useState([]);
   const [existingFiles, setExistingFiles] = useState([]);
   const [filesToKeep, setFilesToKeep] = useState([]);
+  const [searchTerm, setSearchTerm] = useState("");
 
   const [form, setForm] = useState({
     name: "",
@@ -20,8 +26,8 @@ const EmployeePage = () => {
   const [viewFile, setViewFile] = useState(null);
   const [extractedText, setExtractedText] = useState("");
   const [isExtracting, setIsExtracting] = useState(false);
+  const [copied, setCopied] = useState(false);
 
-  /* ---------------- FETCH ---------------- */
   const fetchEmployees = async () => {
     try {
       const res = await axios.get(API_URL);
@@ -35,7 +41,6 @@ const EmployeePage = () => {
     fetchEmployees();
   }, []);
 
-  /* ---------------- VALIDATION ---------------- */
   const validate = () => {
     if (!form.name.trim()) {
       alert("Name is required");
@@ -68,7 +73,6 @@ const EmployeePage = () => {
     return true;
   };
 
-  /* ---------------- INPUT HANDLERS ---------------- */
   const handleChange = (e) => {
     const { name, value } = e.target;
     setForm((prev) => ({ ...prev, [name]: value }));
@@ -77,20 +81,19 @@ const EmployeePage = () => {
   const handleFileChange = (e) => {
     const newFiles = Array.from(e.target.files);
     setSelectedFiles((prev) => [...prev, ...newFiles]);
-    e.target.value = ""; // Reset input
+    e.target.value = "";
   };
 
-  /* ---------------- REMOVE FILE ---------------- */
   const handleRemoveFile = (index) => {
     setSelectedFiles((prev) => prev.filter((_, i) => i !== index));
   };
 
   const handleRemoveExistingFile = (index) => {
+    const fileToRemove = existingFiles[index];
     setExistingFiles((prev) => prev.filter((_, i) => i !== index));
-    setFilesToKeep((prev) => prev.filter((_, i) => i !== index));
+    setFilesToKeep((prev) => prev.filter((file) => file.url !== fileToRemove.url));
   };
 
-  /* ---------------- SUBMIT ---------------- */
   const handleSubmit = async (e) => {
     e.preventDefault();
     if (!validate()) return;
@@ -100,12 +103,10 @@ const EmployeePage = () => {
     data.append("email", form.email);
     data.append("phone", form.phone);
 
-    // Add new files
     selectedFiles.forEach((file) => {
       data.append("files", file);
     });
 
-    // Add existing files to keep (for edit mode)
     if (editId) {
       data.append("existingFiles", JSON.stringify(filesToKeep));
     }
@@ -131,7 +132,6 @@ const EmployeePage = () => {
     }
   };
 
-  /* ---------------- EDIT ---------------- */
   const handleEdit = (emp) => {
     setEditId(emp._id);
     setForm({
@@ -140,13 +140,14 @@ const EmployeePage = () => {
       phone: emp.phone,
     });
     setSelectedFiles([]);
-    setExistingFiles(emp.files || []);
-    setFilesToKeep(emp.files || []);
+    const files = emp.files || [];
+    setExistingFiles(files);
+    setFilesToKeep(files);
+    window.scrollTo({ top: 0, behavior: 'smooth' });
   };
 
-  /* ---------------- DELETE ---------------- */
   const handleDelete = async (id) => {
-    if (!confirm("Delete this employee?")) return;
+    if (!window.confirm("Delete this employee?")) return;
     
     try {
       await axios.delete(`${API_URL}/${id}`);
@@ -158,7 +159,6 @@ const EmployeePage = () => {
     }
   };
 
-  /* ---------------- RESET ---------------- */
   const resetForm = () => {
     setEditId(null);
     setForm({ name: "", email: "", phone: "" });
@@ -167,13 +167,11 @@ const EmployeePage = () => {
     setFilesToKeep([]);
   };
 
-  /* ---------------- EXTRACT TEXT FROM FILE ---------------- */
   const handleExtractText = async (fileUrl, isPdf) => {
     setIsExtracting(true);
     setExtractedText("");
 
     try {
-      // Send file URL to backend for text extraction
       const response = await axios.post(`${API_URL}/extract-text`, {
         fileUrl: fileUrl,
         fileType: isPdf ? 'pdf' : 'image'
@@ -188,7 +186,12 @@ const EmployeePage = () => {
     }
   };
 
-  /* ---------------- RENDER FILE PREVIEW ---------------- */
+  const handleCopyText = () => {
+    navigator.clipboard.writeText(extractedText);
+    setCopied(true);
+    setTimeout(() => setCopied(false), 2000);
+  };
+
   const renderFilePreview = (file, index, isExisting = false) => {
     const fileUrl = isExisting ? file.url : URL.createObjectURL(file);
     const fileName = isExisting ? file.url.split("/").pop() : file.name;
@@ -197,168 +200,204 @@ const EmployeePage = () => {
       : file.type.startsWith("image/");
 
     return (
-      <div key={index} className="border p-2 rounded relative bg-gray-50">
+      <div key={index} className="group relative border-2 border-gray-200 rounded-xl overflow-hidden bg-white hover:border-blue-400 transition-all">
         <button
           type="button"
           onClick={() => isExisting ? handleRemoveExistingFile(index) : handleRemoveFile(index)}
-          className="absolute top-1 right-1 bg-red-500 text-white rounded-full w-6 h-6 flex items-center justify-center hover:bg-red-600 text-lg font-bold shadow z-10"
+          className="absolute top-2 right-2 bg-red-500 text-white rounded-full w-7 h-7 flex items-center justify-center hover:bg-red-600 transition-all z-10 opacity-0 group-hover:opacity-100"
           title="Remove file"
         >
-          ×
+          <X className="w-4 h-4" />
         </button>
         
         {isImage ? (
           <img 
             src={fileUrl} 
-            className="h-24 w-full object-cover rounded" 
+            className="h-28 w-full object-cover" 
             alt={fileName}
           />
         ) : (
-          <div className="h-24 flex items-center justify-center bg-gray-100 rounded">
-            <div className="text-center p-2">
-              <svg className="w-8 h-8 mx-auto text-red-600 mb-1" fill="currentColor" viewBox="0 0 20 20">
-                <path fillRule="evenodd" d="M4 4a2 2 0 012-2h4.586A2 2 0 0112 2.586L15.414 6A2 2 0 0116 7.414V16a2 2 0 01-2 2H6a2 2 0 01-2-2V4zm2 6a1 1 0 011-1h6a1 1 0 110 2H7a1 1 0 01-1-1zm1 3a1 1 0 100 2h6a1 1 0 100-2H7z" clipRule="evenodd" />
-              </svg>
-              <p className="text-xs text-gray-600 break-all">PDF</p>
-            </div>
+          <div className="h-28 flex items-center justify-center bg-red-50">
+            <FileText className="w-12 h-12 text-red-500" />
           </div>
         )}
+        <div className="p-2 bg-gray-50">
+          <p className="text-xs text-gray-600 truncate">{fileName.substring(0, 20)}</p>
+        </div>
       </div>
     );
   };
 
-  return (
-    <div className="min-h-screen bg-gray-100 p-6">
-      <h1 className="text-3xl font-bold text-center mb-6 text-gray-800">
-        Employee Management
-      </h1>
+  const filteredEmployees = employees.filter(emp => 
+    emp.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
+    emp.email.toLowerCase().includes(searchTerm.toLowerCase()) ||
+    emp.phone.includes(searchTerm)
+  );
 
-      {/* ---------------- FILE VIEWER MODAL ---------------- */}
+  return (
+    <div className="min-h-screen bg-gradient-to-br from-blue-50 via-indigo-50 to-purple-50 p-6">
+      <div className="max-w-7xl mx-auto mb-8">
+        <h1 className="text-5xl font-bold text-center bg-gradient-to-r from-blue-600 via-indigo-600 to-purple-600 bg-clip-text text-transparent mb-2">
+          Employee Management
+        </h1>
+        <p className="text-center text-gray-600">Manage your team with ease</p>
+      </div>
+
       {viewFile && (
         <div 
-          className="fixed inset-0 bg-black bg-opacity-75 z-50 flex items-center justify-center p-4"
-          onClick={() => setViewFile(null)}
+          className="fixed inset-0 bg-black bg-opacity-60 z-50 flex items-center justify-center p-4"
+          onClick={() => {
+            setViewFile(null);
+            setExtractedText("");
+          }}
         >
           <div 
-            className="bg-white rounded-lg max-w-4xl max-h-[90vh] w-full overflow-hidden"
+            className="bg-white rounded-2xl max-w-6xl max-h-[90vh] w-full overflow-hidden shadow-2xl"
             onClick={(e) => e.stopPropagation()}
           >
-            <div className="bg-gray-800 text-white p-4 flex justify-between items-center">
-              <h3 className="text-lg font-semibold">File Viewer</h3>
-              <div className="flex items-center gap-2">
+            <div className="bg-gradient-to-r from-blue-600 to-indigo-600 text-white p-5 flex justify-between items-center">
+              <h3 className="text-xl font-semibold flex items-center gap-2">
+                <FileText className="w-6 h-6" />
+                File Viewer
+              </h3>
+              <div className="flex items-center gap-3">
                 <button
                   onClick={() => {
                     setExtractedText("");
                     handleExtractText(viewFile.url, viewFile.isPdf);
                   }}
                   disabled={isExtracting}
-                  className="bg-green-600 hover:bg-green-700 px-4 py-2 rounded text-sm font-medium disabled:bg-gray-500"
+                  className="bg-white text-blue-600 px-4 py-2 rounded-lg text-sm font-medium hover:bg-blue-50 transition-all disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
                 >
-                  {isExtracting ? "Extracting..." : "Extract Text"}
+                  {isExtracting ? (
+                    <>
+                      <Loader2 className="w-4 h-4 animate-spin" />
+                      Extracting...
+                    </>
+                  ) : (
+                    <>
+                      <FileText className="w-4 h-4" />
+                      Extract Text
+                    </>
+                  )}
                 </button>
                 <button
                   onClick={() => {
                     setViewFile(null);
                     setExtractedText("");
                   }}
-                  className="text-white hover:text-gray-300 text-2xl font-bold"
+                  className="text-white hover:bg-white hover:bg-opacity-20 rounded-lg p-2 transition-all"
                 >
-                  ×
+                  <X className="w-6 h-6" />
                 </button>
               </div>
             </div>
-            <div className="p-4 overflow-auto max-h-[calc(90vh-80px)]">
-              <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-                {/* FILE PREVIEW */}
-                <div>
+
+            <div className="p-6 overflow-auto max-h-[calc(90vh-100px)]">
+              <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+                <div className="space-y-4">
                   {viewFile.isPdf ? (
                     <div className="space-y-4">
                       <object
                         data={viewFile.url}
                         type="application/pdf"
-                        className="w-full h-[60vh] border rounded"
+                        className="w-full h-[60vh] border-2 border-gray-200 rounded-xl"
                       >
-                        <div className="flex flex-col items-center justify-center h-[60vh] bg-gray-100 rounded">
-                          <svg className="w-16 h-16 text-gray-400 mb-4" fill="currentColor" viewBox="0 0 20 20">
-                            <path fillRule="evenodd" d="M4 4a2 2 0 012-2h4.586A2 2 0 0112 2.586L15.414 6A2 2 0 0116 7.414V16a2 2 0 01-2 2H6a2 2 0 01-2-2V4zm2 6a1 1 0 011-1h6a1 1 0 110 2H7a1 1 0 01-1-1zm1 3a1 1 0 100 2h6a1 1 0 100-2H7z" clipRule="evenodd" />
-                          </svg>
+                        <div className="flex flex-col items-center justify-center h-[60vh] bg-gray-50 rounded-xl">
+                          <AlertCircle className="w-16 h-16 text-gray-400 mb-4" />
                           <p className="text-gray-600 mb-4">PDF cannot be displayed in browser</p>
                           <a
                             href={viewFile.url}
                             download
-                            className="bg-blue-600 text-white px-6 py-2 rounded hover:bg-blue-700"
+                            className="bg-blue-600 text-white px-6 py-3 rounded-lg hover:bg-blue-700 transition-all flex items-center gap-2"
                           >
+                            <Download className="w-4 h-4" />
                             Download PDF
                           </a>
                         </div>
                       </object>
-                      <div className="flex gap-2 justify-center">
+                      <div className="flex gap-3">
                         <a
                           href={viewFile.url}
                           download
-                          className="bg-blue-600 text-white px-4 py-2 rounded hover:bg-blue-700 text-sm"
+                          className="flex-1 bg-blue-600 text-white px-4 py-3 rounded-lg hover:bg-blue-700 transition-all flex items-center justify-center gap-2 font-medium"
                         >
+                          <Download className="w-4 h-4" />
                           Download
                         </a>
                         <a
                           href={viewFile.url}
                           target="_blank"
                           rel="noopener noreferrer"
-                          className="bg-gray-600 text-white px-4 py-2 rounded hover:bg-gray-700 text-sm"
+                          className="flex-1 bg-gray-600 text-white px-4 py-3 rounded-lg hover:bg-gray-700 transition-all flex items-center justify-center gap-2 font-medium"
                         >
-                          Open in Tab
+                          <ExternalLink className="w-4 h-4" />
+                          Open
                         </a>
                       </div>
                     </div>
                   ) : (
-                    <div className="flex flex-col items-center">
-                      <img
-                        src={viewFile.url}
-                        alt="File preview"
-                        className="max-w-full max-h-[60vh] object-contain rounded border"
-                      />
-                      <div className="mt-4 flex gap-2">
+                    <div className="space-y-4">
+                      <div className="border-2 border-gray-200 rounded-xl overflow-hidden">
+                        <img
+                          src={viewFile.url}
+                          alt="File preview"
+                          className="w-full h-[60vh] object-contain bg-gray-50"
+                        />
+                      </div>
+                      <div className="flex gap-3">
                         <a
                           href={viewFile.url}
                           download
-                          className="bg-blue-600 text-white px-4 py-2 rounded hover:bg-blue-700 text-sm"
+                          className="flex-1 bg-blue-600 text-white px-4 py-3 rounded-lg hover:bg-blue-700 transition-all flex items-center justify-center gap-2 font-medium"
                         >
+                          <Download className="w-4 h-4" />
                           Download
                         </a>
                         <a
                           href={viewFile.url}
                           target="_blank"
                           rel="noopener noreferrer"
-                          className="bg-gray-600 text-white px-4 py-2 rounded hover:bg-gray-700 text-sm"
+                          className="flex-1 bg-gray-600 text-white px-4 py-3 rounded-lg hover:bg-gray-700 transition-all flex items-center justify-center gap-2 font-medium"
                         >
-                          Open in Tab
+                          <ExternalLink className="w-4 h-4" />
+                          Open
                         </a>
                       </div>
                     </div>
                   )}
                 </div>
 
-                {/* EXTRACTED TEXT */}
-                <div className="border rounded p-4 bg-gray-50">
-                  <div className="flex justify-between items-center mb-3">
-                    <h4 className="font-semibold text-gray-700">Extracted Text</h4>
+                <div className="border-2 border-gray-200 rounded-xl bg-gray-50">
+                  <div className="bg-gray-100 p-4 flex justify-between items-center border-b-2 border-gray-200">
+                    <h4 className="font-semibold text-gray-800 flex items-center gap-2">
+                      <FileText className="w-5 h-5" />
+                      Extracted Text
+                    </h4>
                     {extractedText && (
                       <button
-                        onClick={() => {
-                          navigator.clipboard.writeText(extractedText);
-                          alert("Text copied to clipboard!");
-                        }}
-                        className="text-sm bg-blue-600 text-white px-3 py-1 rounded hover:bg-blue-700"
+                        onClick={handleCopyText}
+                        className="text-sm bg-blue-600 text-white px-4 py-2 rounded-lg hover:bg-blue-700 transition-all flex items-center gap-2"
                       >
-                        Copy Text
+                        {copied ? (
+                          <>
+                            <CheckCircle className="w-4 h-4" />
+                            Copied!
+                          </>
+                        ) : (
+                          <>
+                            <Copy className="w-4 h-4" />
+                            Copy
+                          </>
+                        )}
                       </button>
                     )}
                   </div>
-                  <div className="bg-white border rounded p-3 max-h-[55vh] overflow-auto">
+                  <div className="p-4 max-h-[55vh] overflow-auto">
                     {isExtracting ? (
-                      <div className="flex items-center justify-center py-8">
+                      <div className="flex items-center justify-center py-12">
                         <div className="text-center">
-                          <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600 mx-auto mb-3"></div>
+                          <Loader2 className="w-12 h-12 text-blue-600 mx-auto mb-4 animate-spin" />
                           <p className="text-gray-600">Extracting text...</p>
                         </div>
                       </div>
@@ -367,9 +406,12 @@ const EmployeePage = () => {
                         {extractedText}
                       </pre>
                     ) : (
-                      <p className="text-gray-400 text-center py-8">
-                        Click "Extract Text" button to extract text from this file
-                      </p>
+                      <div className="flex flex-col items-center justify-center py-12 text-center">
+                        <FileText className="w-16 h-16 text-gray-300 mb-4" />
+                        <p className="text-gray-400">
+                          Click "Extract Text" button to extract text from this file
+                        </p>
+                      </div>
                     )}
                   </div>
                 </div>
@@ -379,214 +421,247 @@ const EmployeePage = () => {
         </div>
       )}
 
-      {/* ---------------- FORM ---------------- */}
-      <div className="max-w-md mx-auto bg-white p-6 rounded-lg shadow-md mb-6">
-        <h2 className="text-xl font-semibold mb-4 text-gray-700">
-          {editId ? "Edit Employee" : "Add Employee"}
-        </h2>
+      <div className="max-w-7xl mx-auto grid grid-cols-1 lg:grid-cols-3 gap-6">
+        <div className="lg:col-span-1">
+          <div className="bg-white rounded-2xl shadow-xl p-6 border border-gray-100 sticky top-6">
+            <h2 className="text-2xl font-bold mb-6 flex items-center gap-2 text-gray-800">
+              {editId ? (
+                <>
+                  <Edit2 className="w-6 h-6 text-blue-600" />
+                  Edit Employee
+                </>
+              ) : (
+                <>
+                  <Plus className="w-6 h-6 text-green-600" />
+                  Add Employee
+                </>
+              )}
+            </h2>
 
-        <form onSubmit={handleSubmit} className="space-y-4">
-          <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1">
-              Name
-            </label>
-            <input
-              name="name"
-              placeholder="Enter full name"
-              value={form.name}
-              onChange={handleChange}
-              className="w-full border border-gray-300 p-2 rounded focus:outline-none focus:ring-2 focus:ring-blue-500"
-            />
-          </div>
+            <div className="space-y-5">
+              <div>
+                <label className="block text-sm font-semibold text-gray-700 mb-2 flex items-center gap-2">
+                  <User className="w-4 h-4" />
+                  Name
+                </label>
+                <input
+                  name="name"
+                  placeholder="Enter full name"
+                  value={form.name}
+                  onChange={handleChange}
+                  className="w-full border-2 border-gray-200 p-3 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all"
+                />
+              </div>
 
-          <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1">
-              Email
-            </label>
-            <input
-              name="email"
-              type="email"
-              placeholder="email@example.com"
-              value={form.email}
-              onChange={handleChange}
-              className="w-full border border-gray-300 p-2 rounded focus:outline-none focus:ring-2 focus:ring-blue-500"
-            />
-          </div>
+              <div>
+                <label className="block text-sm font-semibold text-gray-700 mb-2 flex items-center gap-2">
+                  <Mail className="w-4 h-4" />
+                  Email
+                </label>
+                <input
+                  name="email"
+                  type="email"
+                  placeholder="email@example.com"
+                  value={form.email}
+                  onChange={handleChange}
+                  className="w-full border-2 border-gray-200 p-3 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all"
+                />
+              </div>
 
-          <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1">
-              Phone
-            </label>
-            <input
-              name="phone"
-              placeholder="10 digit phone number"
-              value={form.phone}
-              onChange={handleChange}
-              maxLength="10"
-              className="w-full border border-gray-300 p-2 rounded focus:outline-none focus:ring-2 focus:ring-blue-500"
-            />
-          </div>
+              <div>
+                <label className="block text-sm font-semibold text-gray-700 mb-2 flex items-center gap-2">
+                  <Phone className="w-4 h-4" />
+                  Phone
+                </label>
+                <input
+                  name="phone"
+                  placeholder="10 digit phone"
+                  value={form.phone}
+                  onChange={handleChange}
+                  maxLength="10"
+                  className="w-full border-2 border-gray-200 p-3 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all"
+                />
+              </div>
 
-          <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1">
-              Files {!editId && <span className="text-red-500">*</span>}
-            </label>
-            <input
-              type="file"
-              multiple
-              accept="image/*,.pdf"
-              onChange={handleFileChange}
-              className="w-full border border-gray-300 p-2 rounded focus:outline-none focus:ring-2 focus:ring-blue-500"
-            />
-          </div>
+              <div>
+                <label className="block text-sm font-semibold text-gray-700 mb-2 flex items-center gap-2">
+                  <Upload className="w-4 h-4" />
+                  Files {!editId && <span className="text-red-500">*</span>}
+                </label>
+                <div className="relative">
+                  <input
+                    type="file"
+                    multiple
+                    accept="image/*,.pdf"
+                    onChange={handleFileChange}
+                    className="hidden"
+                    id="file-upload"
+                  />
+                  <label
+                    htmlFor="file-upload"
+                    className="w-full border-2 border-dashed border-gray-300 p-4 rounded-xl hover:border-blue-500 transition-all cursor-pointer flex items-center justify-center gap-2 bg-gray-50 hover:bg-blue-50"
+                  >
+                    <Upload className="w-5 h-5 text-gray-500" />
+                    <span className="text-gray-600">Choose files</span>
+                  </label>
+                </div>
+              </div>
 
-          {/* EXISTING FILES (in edit mode) */}
-          {existingFiles.length > 0 && (
-            <div>
-              <h3 className="text-sm font-medium text-gray-700 mb-2">
-                Existing Files ({existingFiles.length})
-              </h3>
-              <div className="grid grid-cols-3 gap-2">
-                {existingFiles.map((file, index) => 
-                  renderFilePreview(file, index, true)
+              {existingFiles.length > 0 && (
+                <div>
+                  <h3 className="text-sm font-semibold text-gray-700 mb-3">
+                    Existing Files ({existingFiles.length})
+                  </h3>
+                  <div className="grid grid-cols-2 gap-3">
+                    {existingFiles.map((file, index) => 
+                      renderFilePreview(file, index, true)
+                    )}
+                  </div>
+                </div>
+              )}
+
+              {selectedFiles.length > 0 && (
+                <div>
+                  <h3 className="text-sm font-semibold text-gray-700 mb-3">
+                    {editId ? "New Files" : "Selected Files"} ({selectedFiles.length})
+                  </h3>
+                  <div className="grid grid-cols-2 gap-3">
+                    {selectedFiles.map((file, index) => 
+                      renderFilePreview(file, index, false)
+                    )}
+                  </div>
+                </div>
+              )}
+
+              <div className="flex gap-3 pt-3">
+                <button 
+                  type="button"
+                  onClick={handleSubmit}
+                  className="flex-1 bg-gradient-to-r from-blue-600 to-indigo-600 text-white py-3 px-4 rounded-xl hover:from-blue-700 hover:to-indigo-700 transition-all font-semibold shadow-lg"
+                >
+                  {editId ? "Update Employee" : "Add Employee"}
+                </button>
+
+                {editId && (
+                  <button
+                    type="button"
+                    onClick={resetForm}
+                    className="flex-1 bg-gray-400 text-white py-3 px-4 rounded-xl hover:bg-gray-500 transition-all font-semibold"
+                  >
+                    Cancel
+                  </button>
                 )}
               </div>
             </div>
-          )}
-
-          {/* NEW FILES */}
-          {selectedFiles.length > 0 && (
-            <div>
-              <h3 className="text-sm font-medium text-gray-700 mb-2">
-                {editId ? "New Files to Add" : "Selected Files"} ({selectedFiles.length})
-              </h3>
-              <div className="grid grid-cols-3 gap-2">
-                {selectedFiles.map((file, index) => 
-                  renderFilePreview(file, index, false)
-                )}
-              </div>
-            </div>
-          )}
-
-          <div className="flex gap-2 pt-2">
-            <button 
-              type="submit"
-              className="flex-1 bg-blue-600 text-white py-2 px-4 rounded hover:bg-blue-700 transition font-medium"
-            >
-              {editId ? "Update Employee" : "Add Employee"}
-            </button>
-
-            {editId && (
-              <button
-                type="button"
-                onClick={resetForm}
-                className="flex-1 bg-gray-400 text-white py-2 px-4 rounded hover:bg-gray-500 transition font-medium"
-              >
-                Cancel
-              </button>
-            )}
           </div>
-        </form>
-      </div>
-
-      {/* ---------------- LIST ---------------- */}
-      <div className="max-w-5xl mx-auto bg-white rounded-lg shadow-md overflow-hidden">
-        <div className="p-4 bg-gray-50 border-b">
-          <h2 className="text-xl font-semibold text-gray-700">Employees List</h2>
         </div>
 
-        <div className="overflow-x-auto">
-          <table className="w-full text-sm">
-            <thead className="bg-gray-200">
-              <tr>
-                <th className="p-3 text-left font-semibold">Name</th>
-                <th className="p-3 text-left font-semibold">Email</th>
-                <th className="p-3 text-left font-semibold">Phone</th>
-                <th className="p-3 text-left font-semibold">Files</th>
-                <th className="p-3 text-center font-semibold">Actions</th>
-              </tr>
-            </thead>
-            <tbody>
-              {employees.map((emp) => (
-                <tr key={emp._id} className="border-t hover:bg-gray-50">
-                  <td className="p-3">{emp.name}</td>
-                  <td className="p-3">{emp.email}</td>
-                  <td className="p-3">{emp.phone}</td>
-                  <td className="p-3">
-                    {emp.files?.length ? (
-                      <div className="flex gap-2 flex-wrap">
-                        {emp.files.map((file, i) => {
-                          const isPdf = file.url.toLowerCase().includes('.pdf');
-                          
-                          return (
-                            <div key={i} className="relative group">
-                              {isPdf ? (
+        <div className="lg:col-span-2">
+          <div className="bg-white rounded-2xl shadow-xl overflow-hidden border border-gray-100">
+            <div className="bg-gradient-to-r from-blue-600 to-indigo-600 p-6">
+              <h2 className="text-2xl font-bold text-white mb-4">Employees List</h2>
+              <div className="relative">
+                <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400 w-5 h-5" />
+                <input
+                  type="text"
+                  placeholder="Search employees..."
+                  value={searchTerm}
+                  onChange={(e) => setSearchTerm(e.target.value)}
+                  className="w-full pl-10 pr-4 py-3 rounded-xl border-2 border-transparent focus:outline-none focus:ring-2 focus:ring-white focus:border-transparent transition-all"
+                />
+              </div>
+            </div>
+
+            <div className="overflow-x-auto">
+              <table className="w-full">
+                <thead className="bg-gradient-to-r from-gray-50 to-gray-100">
+                  <tr>
+                    <th className="p-4 text-left font-semibold text-gray-700">Name</th>
+                    <th className="p-4 text-left font-semibold text-gray-700">Email</th>
+                    <th className="p-4 text-left font-semibold text-gray-700">Phone</th>
+                    <th className="p-4 text-left font-semibold text-gray-700">Files</th>
+                    <th className="p-4 text-center font-semibold text-gray-700">Actions</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {filteredEmployees.map((emp) => (
+                    <tr key={emp._id} className="border-t border-gray-100 hover:bg-blue-50 transition-all">
+                      <td className="p-4 font-medium text-gray-800">{emp.name}</td>
+                      <td className="p-4 text-gray-600">{emp.email}</td>
+                      <td className="p-4 text-gray-600">{emp.phone}</td>
+                      <td className="p-4">
+                        {emp.files?.length ? (
+                          <div className="flex gap-2 flex-wrap">
+                            {emp.files.map((file, i) => {
+                              const isPdf = file.url.toLowerCase().includes('.pdf');
+                              
+                              return (
                                 <button
-                                  onClick={() => setViewFile({ url: file.url, isPdf: true })}
-                                  className="block"
-                                  title="View PDF"
+                                  key={i}
+                                  onClick={() => setViewFile({ url: file.url, isPdf })}
+                                  className="group relative hover:scale-110 transition-transform"
+                                  title={`View file ${i + 1}`}
                                 >
-                                  <div className="w-16 h-16 bg-red-100 border-2 border-red-300 rounded flex flex-col items-center justify-center hover:border-red-500 transition cursor-pointer">
-                                    <svg className="w-8 h-8 text-red-600" fill="currentColor" viewBox="0 0 20 20">
-                                      <path fillRule="evenodd" d="M4 4a2 2 0 012-2h4.586A2 2 0 0112 2.586L15.414 6A2 2 0 0116 7.414V16a2 2 0 01-2 2H6a2 2 0 01-2-2V4zm2 6a1 1 0 011-1h6a1 1 0 110 2H7a1 1 0 01-1-1zm1 3a1 1 0 100 2h6a1 1 0 100-2H7z" clipRule="evenodd" />
-                                    </svg>
-                                    <span className="text-xs text-red-600 font-semibold mt-1">PDF</span>
-                                  </div>
-                                  <span className="absolute -bottom-1 -right-1 bg-blue-600 text-white text-xs rounded-full w-5 h-5 flex items-center justify-center">
+                                  {isPdf ? (
+                                    <div className="w-12 h-12 bg-red-100 border-2 border-red-300 rounded-lg flex flex-col items-center justify-center hover:border-red-500 transition-all shadow-sm">
+                                      <FileText className="w-6 h-6 text-red-600" />
+                                    </div>
+                                  ) : (
+                                    <img 
+                                      src={file.url} 
+                                      alt={`File ${i + 1}`}
+                                      className="w-12 h-12 object-cover rounded-lg border-2 border-gray-300 hover:border-blue-500 transition-all shadow-sm"
+                                    />
+                                  )}
+                                  <span className="absolute -bottom-1 -right-1 bg-gradient-to-r from-blue-600 to-indigo-600 text-white text-xs rounded-full w-5 h-5 flex items-center justify-center font-semibold shadow-lg">
                                     {i + 1}
                                   </span>
                                 </button>
-                              ) : (
-                                <button
-                                  onClick={() => setViewFile({ url: file.url, isPdf: false })}
-                                  className="block"
-                                  title={`View image ${i + 1}`}
-                                >
-                                  <img 
-                                    src={file.url} 
-                                    alt={`File ${i + 1}`}
-                                    className="w-16 h-16 object-cover rounded border-2 border-gray-300 hover:border-blue-500 transition cursor-pointer"
-                                  />
-                                  <span className="absolute -bottom-1 -right-1 bg-blue-600 text-white text-xs rounded-full w-5 h-5 flex items-center justify-center">
-                                    {i + 1}
-                                  </span>
-                                </button>
-                              )}
-                            </div>
-                          );
-                        })}
-                      </div>
-                    ) : (
-                      <span className="text-gray-400">No files</span>
-                    )}
-                  </td>
+                              );
+                            })}
+                          </div>
+                        ) : (
+                          <span className="text-gray-400 italic">No files</span>
+                        )}
+                      </td>
 
-                  <td className="p-3 text-center">
-                    <button
-                      onClick={() => handleEdit(emp)}
-                      className="text-blue-600 hover:text-blue-800 hover:underline font-medium mr-3"
-                    >
-                      Edit
-                    </button>
-                    <button
-                      onClick={() => handleDelete(emp._id)}
-                      className="text-red-600 hover:text-red-800 hover:underline font-medium"
-                    >
-                      Delete
-                    </button>
-                  </td>
-                </tr>
-              ))}
+                      <td className="p-4">
+                        <div className="flex items-center justify-center gap-2">
+                          <button
+                            onClick={() => handleEdit(emp)}
+                            className="text-blue-600 hover:bg-blue-100 p-2 rounded-lg transition-all group"
+                            title="Edit"
+                          >
+                            <Edit2 className="w-5 h-5" />
+                          </button>
+                          <button
+                            onClick={() => handleDelete(emp._id)}
+                            className="text-red-600 hover:bg-red-100 p-2 rounded-lg transition-all group"
+                            title="Delete"
+                          >
+                            <Trash2 className="w-5 h-5" />
+                          </button>
+                        </div>
+                      </td>
+                    </tr>
+                  ))}
 
-              {!employees.length && (
-                <tr>
-                  <td colSpan="5" className="text-center py-8 text-gray-400">
-                    No employees found. Add your first employee above.
-                  </td>
-                </tr>
-              )}
-            </tbody>
-          </table>
+                  {filteredEmployees.length === 0 && (
+                    <tr>
+                      <td colSpan="5" className="text-center py-12">
+                        <div className="flex flex-col items-center">
+                          <User className="w-16 h-16 text-gray-300 mb-4" />
+                          <p className="text-gray-400 text-lg">
+                            {searchTerm ? "No employees found matching your search" : "No employees yet. Add your first employee!"}
+                          </p>
+                        </div>
+                      </td>
+                    </tr>
+                  )}
+                </tbody>
+              </table>
+            </div>
+          </div>
         </div>
       </div>
     </div>
