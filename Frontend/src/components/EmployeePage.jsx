@@ -1,9 +1,22 @@
 import { useEffect, useState } from "react";
 import axios from "axios";
-import { 
-  User, Mail, Phone, Upload, X, Edit2, Trash2, 
-  FileText, Download, ExternalLink, 
-  Copy, CheckCircle, Loader2, Search, Plus, AlertCircle
+import {
+  User,
+  Mail,
+  Phone,
+  Upload,
+  X,
+  Edit2,
+  Trash2,
+  FileText,
+  Download,
+  ExternalLink,
+  Copy,
+  CheckCircle,
+  Loader2,
+  Search,
+  Plus,
+  AlertCircle,
 } from "lucide-react";
 
 const API_BASE = import.meta.env.VITE_API_URL;
@@ -91,7 +104,9 @@ const EmployeePage = () => {
   const handleRemoveExistingFile = (index) => {
     const fileToRemove = existingFiles[index];
     setExistingFiles((prev) => prev.filter((_, i) => i !== index));
-    setFilesToKeep((prev) => prev.filter((file) => file.url !== fileToRemove.url));
+    setFilesToKeep((prev) =>
+      prev.filter((file) => file.url !== fileToRemove.url)
+    );
   };
 
   const handleSubmit = async (e) => {
@@ -143,12 +158,12 @@ const EmployeePage = () => {
     const files = emp.files || [];
     setExistingFiles(files);
     setFilesToKeep(files);
-    window.scrollTo({ top: 0, behavior: 'smooth' });
+    window.scrollTo({ top: 0, behavior: "smooth" });
   };
 
   const handleDelete = async (id) => {
     if (!window.confirm("Delete this employee?")) return;
-    
+
     try {
       await axios.delete(`${API_URL}/${id}`);
       alert("Employee deleted successfully");
@@ -174,13 +189,19 @@ const EmployeePage = () => {
     try {
       const response = await axios.post(`${API_URL}/extract-text`, {
         fileUrl: fileUrl,
-        fileType: isPdf ? 'pdf' : 'image'
+        fileType: isPdf ? "pdf" : "image",
+        extractFields: ["bill_number", "total_amount"],
       });
 
-      setExtractedText(response.data.text || "No text could be extracted from this file.");
+      setExtractedText(
+        response.data.text || "No text could be extracted from this file."
+      );
     } catch (error) {
       console.error("Error extracting text:", error);
-      setExtractedText("Error: Unable to extract text from this file. " + (error.response?.data?.message || ""));
+      setExtractedText(
+        "Error: Unable to extract text from this file. " +
+          (error.response?.data?.message || "")
+      );
     } finally {
       setIsExtracting(false);
     }
@@ -195,25 +216,32 @@ const EmployeePage = () => {
   const renderFilePreview = (file, index, isExisting = false) => {
     const fileUrl = isExisting ? file.url : URL.createObjectURL(file);
     const fileName = isExisting ? file.url.split("/").pop() : file.name;
-    const isImage = isExisting 
-      ? !file.url.toLowerCase().includes('.pdf')
+    const isImage = isExisting
+      ? !file.url.toLowerCase().includes(".pdf")
       : file.type.startsWith("image/");
 
     return (
-      <div key={index} className="group relative border-2 border-gray-200 rounded-xl overflow-hidden bg-white hover:border-blue-400 transition-all">
+      <div
+        key={index}
+        className="group relative border-2 border-gray-200 rounded-xl overflow-hidden bg-white hover:border-blue-400 transition-all"
+      >
         <button
           type="button"
-          onClick={() => isExisting ? handleRemoveExistingFile(index) : handleRemoveFile(index)}
+          onClick={() =>
+            isExisting
+              ? handleRemoveExistingFile(index)
+              : handleRemoveFile(index)
+          }
           className="absolute top-2 right-2 bg-red-500 text-white rounded-full w-7 h-7 flex items-center justify-center hover:bg-red-600 transition-all z-10 opacity-0 group-hover:opacity-100"
           title="Remove file"
         >
           <X className="w-4 h-4" />
         </button>
-        
+
         {isImage ? (
-          <img 
-            src={fileUrl} 
-            className="h-28 w-full object-cover" 
+          <img
+            src={fileUrl}
+            className="h-28 w-full object-cover"
             alt={fileName}
           />
         ) : (
@@ -222,16 +250,19 @@ const EmployeePage = () => {
           </div>
         )}
         <div className="p-2 bg-gray-50">
-          <p className="text-xs text-gray-600 truncate">{fileName.substring(0, 20)}</p>
+          <p className="text-xs text-gray-600 truncate">
+            {fileName.substring(0, 20)}
+          </p>
         </div>
       </div>
     );
   };
 
-  const filteredEmployees = employees.filter(emp => 
-    emp.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
-    emp.email.toLowerCase().includes(searchTerm.toLowerCase()) ||
-    emp.phone.includes(searchTerm)
+  const filteredEmployees = employees.filter(
+    (emp) =>
+      emp.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
+      emp.email.toLowerCase().includes(searchTerm.toLowerCase()) ||
+      emp.phone.includes(searchTerm)
   );
 
   return (
@@ -244,14 +275,14 @@ const EmployeePage = () => {
       </div>
 
       {viewFile && (
-        <div 
+        <div
           className="fixed inset-0 bg-black bg-opacity-60 z-50 flex items-center justify-center p-4"
           onClick={() => {
             setViewFile(null);
             setExtractedText("");
           }}
         >
-          <div 
+          <div
             className="bg-white rounded-2xl max-w-6xl max-h-[90vh] w-full overflow-hidden shadow-2xl"
             onClick={(e) => e.stopPropagation()}
           >
@@ -305,7 +336,9 @@ const EmployeePage = () => {
                       >
                         <div className="flex flex-col items-center justify-center h-[60vh] bg-gray-50 rounded-xl">
                           <AlertCircle className="w-16 h-16 text-gray-400 mb-4" />
-                          <p className="text-gray-600 mb-4">PDF cannot be displayed in browser</p>
+                          <p className="text-gray-600 mb-4">
+                            PDF cannot be displayed in browser
+                          </p>
                           <a
                             href={viewFile.url}
                             download
@@ -409,7 +442,8 @@ const EmployeePage = () => {
                       <div className="flex flex-col items-center justify-center py-12 text-center">
                         <FileText className="w-16 h-16 text-gray-300 mb-4" />
                         <p className="text-gray-400">
-                          Click "Extract Text" button to extract text from this file
+                          Click "Extract Text" button to extract text from this
+                          file
                         </p>
                       </div>
                     )}
@@ -513,7 +547,7 @@ const EmployeePage = () => {
                     Existing Files ({existingFiles.length})
                   </h3>
                   <div className="grid grid-cols-2 gap-3">
-                    {existingFiles.map((file, index) => 
+                    {existingFiles.map((file, index) =>
                       renderFilePreview(file, index, true)
                     )}
                   </div>
@@ -523,10 +557,11 @@ const EmployeePage = () => {
               {selectedFiles.length > 0 && (
                 <div>
                   <h3 className="text-sm font-semibold text-gray-700 mb-3">
-                    {editId ? "New Files" : "Selected Files"} ({selectedFiles.length})
+                    {editId ? "New Files" : "Selected Files"} (
+                    {selectedFiles.length})
                   </h3>
                   <div className="grid grid-cols-2 gap-3">
-                    {selectedFiles.map((file, index) => 
+                    {selectedFiles.map((file, index) =>
                       renderFilePreview(file, index, false)
                     )}
                   </div>
@@ -534,7 +569,7 @@ const EmployeePage = () => {
               )}
 
               <div className="flex gap-3 pt-3">
-                <button 
+                <button
                   type="button"
                   onClick={handleSubmit}
                   className="flex-1 bg-gradient-to-r from-blue-600 to-indigo-600 text-white py-3 px-4 rounded-xl hover:from-blue-700 hover:to-indigo-700 transition-all font-semibold shadow-lg"
@@ -559,7 +594,9 @@ const EmployeePage = () => {
         <div className="lg:col-span-2">
           <div className="bg-white rounded-2xl shadow-xl overflow-hidden border border-gray-100">
             <div className="bg-gradient-to-r from-blue-600 to-indigo-600 p-6">
-              <h2 className="text-2xl font-bold text-white mb-4">Employees List</h2>
+              <h2 className="text-2xl font-bold text-white mb-4">
+                Employees List
+              </h2>
               <div className="relative">
                 <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400 w-5 h-5" />
                 <input
@@ -576,29 +613,48 @@ const EmployeePage = () => {
               <table className="w-full">
                 <thead className="bg-gradient-to-r from-gray-50 to-gray-100">
                   <tr>
-                    <th className="p-4 text-left font-semibold text-gray-700">Name</th>
-                    <th className="p-4 text-left font-semibold text-gray-700">Email</th>
-                    <th className="p-4 text-left font-semibold text-gray-700">Phone</th>
-                    <th className="p-4 text-left font-semibold text-gray-700">Files</th>
-                    <th className="p-4 text-center font-semibold text-gray-700">Actions</th>
+                    <th className="p-4 text-left font-semibold text-gray-700">
+                      Name
+                    </th>
+                    <th className="p-4 text-left font-semibold text-gray-700">
+                      Email
+                    </th>
+                    <th className="p-4 text-left font-semibold text-gray-700">
+                      Phone
+                    </th>
+                    <th className="p-4 text-left font-semibold text-gray-700">
+                      Files
+                    </th>
+                    <th className="p-4 text-center font-semibold text-gray-700">
+                      Actions
+                    </th>
                   </tr>
                 </thead>
                 <tbody>
                   {filteredEmployees.map((emp) => (
-                    <tr key={emp._id} className="border-t border-gray-100 hover:bg-blue-50 transition-all">
-                      <td className="p-4 font-medium text-gray-800">{emp.name}</td>
+                    <tr
+                      key={emp._id}
+                      className="border-t border-gray-100 hover:bg-blue-50 transition-all"
+                    >
+                      <td className="p-4 font-medium text-gray-800">
+                        {emp.name}
+                      </td>
                       <td className="p-4 text-gray-600">{emp.email}</td>
                       <td className="p-4 text-gray-600">{emp.phone}</td>
                       <td className="p-4">
                         {emp.files?.length ? (
                           <div className="flex gap-2 flex-wrap">
                             {emp.files.map((file, i) => {
-                              const isPdf = file.url.toLowerCase().includes('.pdf');
-                              
+                              const isPdf =
+                                typeof file?.filename === "string" &&
+                                file.filename.toLowerCase().endsWith(".pdf");
+
                               return (
                                 <button
                                   key={i}
-                                  onClick={() => setViewFile({ url: file.url, isPdf })}
+                                  onClick={() =>
+                                    setViewFile({ url: file.url, isPdf })
+                                  }
                                   className="group relative hover:scale-110 transition-transform"
                                   title={`View file ${i + 1}`}
                                 >
@@ -607,8 +663,8 @@ const EmployeePage = () => {
                                       <FileText className="w-6 h-6 text-red-600" />
                                     </div>
                                   ) : (
-                                    <img 
-                                      src={file.url} 
+                                    <img
+                                      src={file.url}
                                       alt={`File ${i + 1}`}
                                       className="w-12 h-12 object-cover rounded-lg border-2 border-gray-300 hover:border-blue-500 transition-all shadow-sm"
                                     />
@@ -652,7 +708,9 @@ const EmployeePage = () => {
                         <div className="flex flex-col items-center">
                           <User className="w-16 h-16 text-gray-300 mb-4" />
                           <p className="text-gray-400 text-lg">
-                            {searchTerm ? "No employees found matching your search" : "No employees yet. Add your first employee!"}
+                            {searchTerm
+                              ? "No employees found matching your search"
+                              : "No employees yet. Add your first employee!"}
                           </p>
                         </div>
                       </td>

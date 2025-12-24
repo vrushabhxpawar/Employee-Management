@@ -11,7 +11,7 @@ const pdfExtract = new PDFExtract();
 
 /* ================= EXTRACT TEXT FROM FILE ================= */
 export const extractText = asyncHandler(async (req, res) => {
-  const { fileUrl, fileType } = req.body;
+  const { fileUrl, fileType, extractFields } = req.body;
 
   if (!fileUrl || !fileType) {
     return res.status(400).json({
@@ -20,52 +20,96 @@ export const extractText = asyncHandler(async (req, res) => {
     });
   }
 
+  const filename = fileUrl.split("/").pop();
+  const filePath = path.join(__dirname, "..", "uploads", filename);
+
+  if (!fs.existsSync(filePath)) {
+    return res.status(404).json({
+      success: false,
+      message: "File not found",
+    });
+  }
+
+  let extractedText = "";
+
   try {
-    const filename = fileUrl.split("/").pop();
-    const filePath = path.join(__dirname, "..", "uploads", filename);
-
-    if (!fs.existsSync(filePath)) {
-      return res.status(404).json({
-        success: false,
-        message: "File not found",
-      });
-    }
-
-    let extractedText = "";
-
     if (fileType === "pdf") {
       const data = await pdfExtract.extract(filePath, {});
       extractedText = data.pages
-        .map((page) => page.content.map((item) => item.str).join(" "))
+        .map(page => page.content.map(item => item.str).join(" "))
         .join("\n");
-    } else if (fileType === "image") {
-      const result = await Tesseract.recognize(filePath, "eng", {
-        logger: (m) => console.log(m),
-      });
+    } 
+    else if (fileType === "image") {
+      const result = await Tesseract.recognize(filePath, "eng");
       extractedText = result.data.text;
-    } else {
+    } 
+    else {
       return res.status(400).json({
         success: false,
         message: "Unsupported file type",
       });
     }
 
-    if (!extractedText || extractedText.trim().length === 0) {
+    if (!extractedText.trim()) {
       return res.status(200).json({
         success: true,
-        text: "No text could be extracted from this file.",
+        text: "",
+        message: "No text detected",
       });
     }
 
-    res.status(200).json({
+    const response = {
       success: true,
       text: extractedText.trim(),
-    });
+    };
+
+    if (Array.isArray(extractFields) && extractFields.length > 0) {
+      response.extractedData = extractSpecificFields(
+        extractedText,
+        extractFields
+      );
+    }
+
+    res.status(200).json(response);
+
   } catch (error) {
-    console.error("Error extracting text:", error);
+    console.error("Extraction error:", error);
     res.status(500).json({
       success: false,
-      message: "Error extracting text: " + error.message,
+      message: error.message,
     });
   }
 });
+
+/* ================= FIELD EXTRACTION ================= */
+function extractSpecificFields(text, fields) {
+  const result = {};
+
+  const patterns = {
+    bill_number: [
+      /\bNumber\s*[:\-]?\s*(\d+)\b/gi
+    ],
+    total_amount: [
+      /\bCash\s+([0-9]+(?:\.[0-9]{2})?)\b/gi
+    ],
+  };
+
+  for (const field of fields) {
+    const key = field.toLowerCase().replace(/\s+/g, "_");
+    let value = null;
+
+    if (patterns[key]) {
+      for (const regex of patterns[key]) {
+        const matches = [...text.matchAll(regex)];
+        if (matches.length) {
+          value = matches[0][1]; // first clean match
+          break;
+        }
+      }
+    }
+
+    result[field] = value;
+  }
+
+  return result;
+}

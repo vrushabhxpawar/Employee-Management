@@ -71,9 +71,10 @@ export const updateEmployee = asyncHandler(async (req, res) => {
   const { name, email, phone, existingFiles } = req.body;
 
   if (!name || !email || !phone) {
-    return res
-      .status(400)
-      .json({ success: false, message: "All fields required" });
+    return res.status(400).json({
+      success: false,
+      message: "All fields required",
+    });
   }
 
   if (!isValidEmail(email)) {
@@ -86,60 +87,64 @@ export const updateEmployee = asyncHandler(async (req, res) => {
 
   const employee = await Employee.findById(req.params.id);
   if (!employee) {
-    return res
-      .status(404)
-      .json({ success: false, message: "Employee not found" });
+    return res.status(404).json({
+      success: false,
+      message: "Employee not found",
+    });
   }
 
+  // Check email uniqueness
   const emailOwner = await Employee.findOne({
     email,
     _id: { $ne: req.params.id },
   });
   if (emailOwner) {
-    return res
-      .status(409)
-      .json({ success: false, message: "Email already exists" });
+    return res.status(409).json({
+      success: false,
+      message: "Email already exists",
+    });
   }
 
-  // Parse existing files to keep
+  /* ================= PARSE FILES TO KEEP ================= */
   let filesToKeep = [];
   if (existingFiles) {
     try {
       filesToKeep = JSON.parse(existingFiles);
-    } catch (e) {
+    } catch {
       filesToKeep = [];
     }
   }
 
-  // Delete removed files from Cloudinary
+  /* ================= DELETE REMOVED FILES ================= */
   const filesToDelete = employee.files.filter(
-    (file) => !filesToKeep.some((kept) => kept.publicId === file.publicId)
+    (file) => !filesToKeep.some((keep) => keep.filename === file.filename)
   );
 
   for (const file of filesToDelete) {
     try {
-      await cloudinary.uploader.destroy(file.publicId);
-    } catch (error) {
-      console.error("Error deleting file from cloudinary:", error);
+      const filePath = path.join(process.cwd(), file.path);
+      if (fs.existsSync(filePath)) {
+        fs.unlinkSync(filePath);
+      }
+    } catch (err) {
+      console.error("Error deleting file:", err.message);
     }
   }
 
-  // Start with files to keep
+  /* ================= ADD NEW FILES ================= */
   let updatedFiles = [...filesToKeep];
 
-  // Add new uploaded files
   if (req.files && req.files.length > 0) {
     for (const file of req.files) {
-      const uploaded = await uploadOnCloudinary(file.path);
-      if (uploaded) {
-        updatedFiles.push({
-          url: uploaded.secure_url,
-          publicId: uploaded.public_id,
-        });
-      }
+      updatedFiles.push({
+        url: `${req.protocol}://${req.get("host")}/uploads/${file.filename}`,
+        filename: file.filename,
+        path: `uploads/${file.filename}`,
+      });
     }
   }
 
+  /* ================= UPDATE EMPLOYEE ================= */
   employee.name = name;
   employee.email = email;
   employee.phone = phone;
@@ -147,8 +152,13 @@ export const updateEmployee = asyncHandler(async (req, res) => {
 
   await employee.save();
 
-  res.status(200).json({ success: true, data: employee });
+  res.status(200).json({
+    success: true,
+    data: employee,
+  });
 });
+
+
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);

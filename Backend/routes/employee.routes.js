@@ -7,7 +7,7 @@ import {
   deleteEmployee,
   getEmployeeById,
 } from "../controllers/employee.controller.js";
-import { extractText } from "../controllers/textExtraction.js";
+import {extractText}  from "../controllers/textExtraction.js";
 const router = express.Router();
 
 router.get("/", getEmployees);
