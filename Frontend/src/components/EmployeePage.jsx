@@ -187,20 +187,50 @@ const EmployeePage = () => {
     setExtractedText("");
 
     try {
-      const response = await axios.post(`${API_URL}/extract-text`, {
-        fileUrl: fileUrl,
-        fileType: isPdf ? "pdf" : "image",
-        extractFields: ["bill_number", "total_amount"],
-      });
-
-      setExtractedText(
-        response.data.text || "No text could be extracted from this file."
+      const response = await axios.post(
+        `${API_URL}/extract-text`,
+        {
+          fileUrl: fileUrl,
+          fileType: isPdf ? "pdf" : "image",
+          extractFields: ["total_amount", "bill_number"], // ✅ Must be lowercase with underscore to match backend
+        },
+        {
+          withCredentials: true,
+          headers: {
+            "Content-Type": "application/json",
+          },
+        }
       );
+
+      console.log("✅ API Response:", response.data);
+      console.log("📊 Extracted Data:", response.data.extractedData);
+
+      const totalAmount = response.data?.extractedData?.total_amount;
+
+      if (totalAmount) {
+        const extracted = response.data.extractedData;
+
+        const totalAmount = extracted?.total_amount;
+        const billNumber = extracted?.bill_number;
+
+        setExtractedText(
+          `Bill Number: ${billNumber || "N/A"}\nTotal Amount: £${
+            totalAmount || "N/A"
+          }`
+        );
+      } else if (response.data?.text) {
+        // Show full text if extraction failed
+        setExtractedText(
+          `⚠️ Could not extract total amount.\n\nFull text:\n${response.data.extractedData.total_amount}`
+        );
+      } else {
+        setExtractedText("No text could be extracted from this file.");
+      }
     } catch (error) {
-      console.error("Error extracting text:", error);
+      console.error("❌ Error extracting text:", error);
       setExtractedText(
         "Error: Unable to extract text from this file. " +
-          (error.response?.data?.message || "")
+          (error.response?.data?.message || error.message || "")
       );
     } finally {
       setIsExtracting(false);
