@@ -182,7 +182,6 @@ const EmployeePage = () => {
     setFilesToKeep([]);
   };
 
-
   const handleExtractText = async (fileUrl, isPdf) => {
     setIsExtracting(true);
     setExtractedText("");
@@ -191,76 +190,62 @@ const EmployeePage = () => {
       const response = await axios.post(
         `${API_URL}/extract-text`,
         {
-          fileUrl: fileUrl,
+          fileUrl,
           fileType: isPdf ? "pdf" : "image",
-          extractFields: ["bill_number", "total_amount"], 
         },
         {
           withCredentials: true,
-          headers: {
-            "Content-Type": "application/json",
-          },
+          headers: { "Content-Type": "application/json" },
         }
       );
 
       console.log("✅ API Response:", response.data);
 
-      if (response.data.extractedData) {
+      /* ================= IMAGE RESPONSE ================= */
+      if (!isPdf && response.data.extractedData) {
         const { bill_number, total_amount } = response.data.extractedData;
 
         let displayText = "📄 BILL INFORMATION\n";
         displayText += "═".repeat(40) + "\n\n";
-
-        if (bill_number) {
-          displayText += `🔢 Bill Number: ${bill_number}\n`;
-        } else {
-          displayText += `🔢 Bill Number: Not detected\n`;
-        }
-
-        if (total_amount) {
-          displayText += `💰 Total Amount: £${total_amount}\n`;
-        } else {
-          displayText += `💰 Total Amount: Not detected\n`;
-        }
-
+        displayText += `🔢 Bill Number: ${bill_number ?? "Not detected"}\n`;
+        displayText += `💰 Total Amount: ${total_amount ?? "Not detected"}\n`;
         displayText += "\n" + "═".repeat(40);
-        displayText += "\n\n📋 Full Extracted Text:\n\n";
-        displayText += response.data.text || "No text found";
 
         setExtractedText(displayText);
-
-        // If nothing was found, show a helpful message
-        if (!bill_number && !total_amount) {
-          setExtractedText(
-            "⚠️ Could not extract bill number or total amount.\n\n" +
-              "Tips for better results:\n" +
-              "• Ensure the image is clear and well-lit\n" +
-              "• Make sure text is not blurry or rotated\n" +
-              "• Try uploading a higher resolution image\n\n" +
-              "Full extracted text:\n\n" +
-              (response.data.text || "No text could be read from this file")
-          );
-        }
-      } else {
-        setExtractedText(
-          "⚠️ No data could be extracted.\n\n" +
-            "Full text:\n\n" +
-            (response.data.text || "No text detected")
-        );
+        return;
       }
+
+      /* ================= PDF RESPONSE ================= */
+      if (isPdf && response.data.bills?.length) {
+        let displayText = "📄 MULTIPLE BILLS DETECTED\n";
+        displayText += "═".repeat(40) + "\n\n";
+
+        response.data.bills.forEach((bill, index) => {
+          displayText += `🧾 Bill ${index + 1} (Page ${bill.page})\n`;
+          displayText += `🔢 Bill Number: ${bill.billNo ?? "Not detected"}\n`;
+          displayText += `💰 Amount: ${bill.amount ?? "Not detected"}\n`;
+          displayText += `📊 Confidence: ${bill.confidence}\n`;
+          displayText += "─".repeat(40) + "\n";
+        });
+
+        setExtractedText(displayText);
+        return;
+      }
+
+      /* ================= FALLBACK ================= */
+      setExtractedText(
+        "⚠️ No data could be extracted.\n\n" +
+          "The file was processed, but no bill data was detected."
+      );
     } catch (error) {
       console.error("❌ Error extracting text:", error);
 
-      let errorMessage = "❌ Error: Unable to extract text from this file.\n\n";
+      let errorMessage = "❌ Error: Unable to extract text.\n\n";
 
-      if (error.response?.status === 404) {
-        errorMessage += "File not found on server.";
-      } else if (error.response?.data?.message) {
+      if (error.response?.data?.message) {
         errorMessage += error.response.data.message;
       } else if (error.message) {
         errorMessage += error.message;
-      } else {
-        errorMessage += "Unknown error occurred.";
       }
 
       setExtractedText(errorMessage);

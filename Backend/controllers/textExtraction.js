@@ -13,42 +13,57 @@ export const extractText = asyncHandler(async (req, res) => {
 
   ensureFileExists(filePath);
 
-  let text = "";
+  /* ================= IMAGE FLOW ================= */
+  if (fileType === "image") {
+    const text = await extractTextFromImage(filePath);
 
-  if (fileType === "pdf") {
-    text = await extractTextFromPDF(filePath);
-  } else if (fileType === "image") {
-    text = await extractTextFromImage(filePath);
-  } else {
-    return res.status(400).json({ success: false, message: "Invalid file type" });
-  }
+    // Add validation for OCR result
+    if (!text || typeof text !== "string" || text.trim().length === 0) {
+      return res.status(400).json({
+        success: false,
+        message: "No text could be extracted from the image",
+      });
+    }
 
-  console.log("=== EXTRACTED TEXT FROM GOOGLE VISION ===");
-  console.log("Text length:", text.length);
-  console.log("Full text:");
-  console.log(text);
-  console.log("=== END EXTRACTED TEXT ===");
+    const extractedData = {
+      bill_number: extractBillNumber(text),
+      total_amount: extractTotalAmount(text),
+    };
 
-  const extractedData = {
-    bill_number: extractBillNumber(text),
-    total_amount: extractTotalAmount(text),
-  };
-
-  console.log("\n=== EXTRACTION RESULTS ===");
-  console.log("Bill Number:", extractedData.bill_number);
-  console.log("Total Amount:", extractedData.total_amount);
-  console.log("=== END RESULTS ===\n");
-
-  if (!extractedData.bill_number || !extractedData.total_amount) {
-    return res.status(400).json({ 
-      success: false, 
-      message: "Could not extract bill number or total amount.",
-      debug: {
-        textLength: text.length,
-        textPreview: text.substring(0, 200)
-      }
+    // Changed: Return data even if partially extracted (more lenient)
+    return res.json({
+      success: true,
+      type: "image",
+      extractedData,
+      rawText: text,
+      warning: !extractedData.bill_number || !extractedData.total_amount 
+        ? "Some fields could not be extracted" 
+        : null,
     });
   }
 
-  res.json({ success: true, text, extractedData });
+  /* ================= PDF FLOW ================= */
+  if (fileType === "pdf") {
+    const pdfResult = await extractTextFromPDF(filePath);
+
+    // Add validation for PDF result
+    if (!pdfResult || !pdfResult.bills) {
+      return res.status(400).json({
+        success: false,
+        message: "No text could be extracted from the PDF",
+      });
+    }
+
+    return res.json({
+      success: true,
+      type: "pdf",
+      totalBillsDetected: pdfResult.totalBillsDetected,
+      bills: pdfResult.bills,
+    });
+  }
+
+  return res.status(400).json({
+    success: false,
+    message: "Invalid file type. Supported types: image, pdf",
+  });
 });
