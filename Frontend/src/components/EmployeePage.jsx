@@ -182,26 +182,88 @@ const EmployeePage = () => {
     setFilesToKeep([]);
   };
 
+
   const handleExtractText = async (fileUrl, isPdf) => {
     setIsExtracting(true);
     setExtractedText("");
 
     try {
-      const response = await axios.post(`${API_URL}/extract-text`, {
-        fileUrl: fileUrl,
-        fileType: isPdf ? "pdf" : "image",
-        extractFields: ["bill_number", "total_amount"],
-      });
+      const response = await axios.post(
+        `${API_URL}/extract-text`,
+        {
+          fileUrl: fileUrl,
+          fileType: isPdf ? "pdf" : "image",
+          extractFields: ["bill_number", "total_amount"], 
+        },
+        {
+          withCredentials: true,
+          headers: {
+            "Content-Type": "application/json",
+          },
+        }
+      );
 
-      setExtractedText(
-        response.data.text || "No text could be extracted from this file."
-      );
+      console.log("✅ API Response:", response.data);
+
+      if (response.data.extractedData) {
+        const { bill_number, total_amount } = response.data.extractedData;
+
+        let displayText = "📄 BILL INFORMATION\n";
+        displayText += "═".repeat(40) + "\n\n";
+
+        if (bill_number) {
+          displayText += `🔢 Bill Number: ${bill_number}\n`;
+        } else {
+          displayText += `🔢 Bill Number: Not detected\n`;
+        }
+
+        if (total_amount) {
+          displayText += `💰 Total Amount: £${total_amount}\n`;
+        } else {
+          displayText += `💰 Total Amount: Not detected\n`;
+        }
+
+        displayText += "\n" + "═".repeat(40);
+        displayText += "\n\n📋 Full Extracted Text:\n\n";
+        displayText += response.data.text || "No text found";
+
+        setExtractedText(displayText);
+
+        // If nothing was found, show a helpful message
+        if (!bill_number && !total_amount) {
+          setExtractedText(
+            "⚠️ Could not extract bill number or total amount.\n\n" +
+              "Tips for better results:\n" +
+              "• Ensure the image is clear and well-lit\n" +
+              "• Make sure text is not blurry or rotated\n" +
+              "• Try uploading a higher resolution image\n\n" +
+              "Full extracted text:\n\n" +
+              (response.data.text || "No text could be read from this file")
+          );
+        }
+      } else {
+        setExtractedText(
+          "⚠️ No data could be extracted.\n\n" +
+            "Full text:\n\n" +
+            (response.data.text || "No text detected")
+        );
+      }
     } catch (error) {
-      console.error("Error extracting text:", error);
-      setExtractedText(
-        "Error: Unable to extract text from this file. " +
-          (error.response?.data?.message || "")
-      );
+      console.error("❌ Error extracting text:", error);
+
+      let errorMessage = "❌ Error: Unable to extract text from this file.\n\n";
+
+      if (error.response?.status === 404) {
+        errorMessage += "File not found on server.";
+      } else if (error.response?.data?.message) {
+        errorMessage += error.response.data.message;
+      } else if (error.message) {
+        errorMessage += error.message;
+      } else {
+        errorMessage += "Unknown error occurred.";
+      }
+
+      setExtractedText(errorMessage);
     } finally {
       setIsExtracting(false);
     }
@@ -266,9 +328,9 @@ const EmployeePage = () => {
   );
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-blue-50 via-indigo-50 to-purple-50 p-6">
+    <div className="min-h-screen bg-linear-to-br from-blue-50 via-indigo-50 to-purple-50 p-6">
       <div className="max-w-7xl mx-auto mb-8">
-        <h1 className="text-5xl font-bold text-center bg-gradient-to-r from-blue-600 via-indigo-600 to-purple-600 bg-clip-text text-transparent mb-2">
+        <h1 className="text-5xl font-bold text-center bg-linear-to-r from-blue-600 via-indigo-600 to-purple-600 bg-clip-text text-transparent mb-2">
           Employee Management
         </h1>
         <p className="text-center text-gray-600">Manage your team with ease</p>
@@ -286,7 +348,7 @@ const EmployeePage = () => {
             className="bg-white rounded-2xl max-w-6xl max-h-[90vh] w-full overflow-hidden shadow-2xl"
             onClick={(e) => e.stopPropagation()}
           >
-            <div className="bg-gradient-to-r from-blue-600 to-indigo-600 text-white p-5 flex justify-between items-center">
+            <div className="bg-linear-to-r from-blue-600 to-indigo-600 text-white p-5 flex justify-between items-center">
               <h3 className="text-xl font-semibold flex items-center gap-2">
                 <FileText className="w-6 h-6" />
                 File Viewer
@@ -572,7 +634,7 @@ const EmployeePage = () => {
                 <button
                   type="button"
                   onClick={handleSubmit}
-                  className="flex-1 bg-gradient-to-r from-blue-600 to-indigo-600 text-white py-3 px-4 rounded-xl hover:from-blue-700 hover:to-indigo-700 transition-all font-semibold shadow-lg"
+                  className="flex-1 bg-linear-to-r from-blue-600 to-indigo-600 text-white py-3 px-4 rounded-xl hover:from-blue-700 hover:to-indigo-700 transition-all font-semibold shadow-lg"
                 >
                   {editId ? "Update Employee" : "Add Employee"}
                 </button>
@@ -593,7 +655,7 @@ const EmployeePage = () => {
 
         <div className="lg:col-span-2">
           <div className="bg-white rounded-2xl shadow-xl overflow-hidden border border-gray-100">
-            <div className="bg-gradient-to-r from-blue-600 to-indigo-600 p-6">
+            <div className="bg-linear-to-r from-blue-600 to-indigo-600 p-6">
               <h2 className="text-2xl font-bold text-white mb-4">
                 Employees List
               </h2>
@@ -611,7 +673,7 @@ const EmployeePage = () => {
 
             <div className="overflow-x-auto">
               <table className="w-full">
-                <thead className="bg-gradient-to-r from-gray-50 to-gray-100">
+                <thead className="bg-linear-to-r from-gray-50 to-gray-100">
                   <tr>
                     <th className="p-4 text-left font-semibold text-gray-700">
                       Name
@@ -669,7 +731,7 @@ const EmployeePage = () => {
                                       className="w-12 h-12 object-cover rounded-lg border-2 border-gray-300 hover:border-blue-500 transition-all shadow-sm"
                                     />
                                   )}
-                                  <span className="absolute -bottom-1 -right-1 bg-gradient-to-r from-blue-600 to-indigo-600 text-white text-xs rounded-full w-5 h-5 flex items-center justify-center font-semibold shadow-lg">
+                                  <span className="absolute -bottom-1 -right-1 bg-linear-to-r from-blue-600 to-indigo-600 text-white text-xs rounded-full w-5 h-5 flex items-center justify-center font-semibold shadow-lg">
                                     {i + 1}
                                   </span>
                                 </button>
