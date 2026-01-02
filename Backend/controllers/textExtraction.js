@@ -4,6 +4,7 @@ import { extractTextFromPDF } from "../services/pdf/pdfText.service.js";
 import { extractTextFromImage } from "../services/vision/visionText.service.js";
 import { extractBillNumber, extractTotalAmount } from "../parsers/index.js";
 import { ensureFileExists } from "../utils/file.util.js";
+import BillIndex from "../models/billIndex.model.js";
 
 export const extractText = asyncHandler(async (req, res) => {
   const { fileUrl, fileType } = req.body;
@@ -30,15 +31,36 @@ export const extractText = asyncHandler(async (req, res) => {
       total_amount: extractTotalAmount(text),
     };
 
+    if (extractedData.bill_number && extractedData.total_amount) {
+      const billKey = `${extractedData.bill_number.trim()}_${
+        extractedData.total_amount
+      }`;
+
+      const exists = await BillIndex.findOne({ billKey });
+      if (exists) {
+        return res.status(409).json({
+          success: false,
+          message: "Duplicate bill detected",
+        });
+      }
+
+      await BillIndex.create({
+        billKey,
+        billNumber: extractedData.bill_number.trim(),
+        amount: extractedData.total_amount,
+      });
+    }
+
     // Changed: Return data even if partially extracted (more lenient)
     return res.json({
       success: true,
       type: "image",
       extractedData,
       rawText: text,
-      warning: !extractedData.bill_number || !extractedData.total_amount 
-        ? "Some fields could not be extracted" 
-        : null,
+      warning:
+        !extractedData.bill_number || !extractedData.total_amount
+          ? "Some fields could not be extracted"
+          : null,
     });
   }
 

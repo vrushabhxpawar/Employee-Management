@@ -18,6 +18,7 @@ import {
   Plus,
   AlertCircle,
 } from "lucide-react";
+import toast from "react-hot-toast";
 
 const API_BASE = import.meta.env.VITE_API_URL;
 const API_URL = `${API_BASE}/api/employees`;
@@ -29,6 +30,8 @@ const EmployeePage = () => {
   const [existingFiles, setExistingFiles] = useState([]);
   const [filesToKeep, setFilesToKeep] = useState([]);
   const [searchTerm, setSearchTerm] = useState("");
+  const [isSubmitting, setIsSubmitting] = useState(false);
+  const [isDeleting, setIsDeleting] = useState(false);
 
   const [form, setForm] = useState({
     name: "",
@@ -56,31 +59,31 @@ const EmployeePage = () => {
 
   const validate = () => {
     if (!form.name.trim()) {
-      alert("Name is required");
+      toast.error("Name is required");
       return false;
     }
     if (!form.email.trim()) {
-      alert("Email is required");
+      toast.error("Email is required");
       return false;
     }
     if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(form.email)) {
-      alert("Invalid email format");
+      toast.error("Invalid email format");
       return false;
     }
     if (!form.phone.trim()) {
-      alert("Phone is required");
+      toast.error("Phone is required");
       return false;
     }
     if (!/^[0-9]{10}$/.test(form.phone)) {
-      alert("Phone must be 10 digits");
+      toast.error("Phone must be 10 digits");
       return false;
     }
     if (!editId && selectedFiles.length === 0) {
-      alert("At least one file is required");
+      toast.error("At least one file is required");
       return false;
     }
     if (editId && filesToKeep.length === 0 && selectedFiles.length === 0) {
-      alert("At least one file is required");
+      toast.error("At least one file is required");
       return false;
     }
     return true;
@@ -113,37 +116,33 @@ const EmployeePage = () => {
     e.preventDefault();
     if (!validate()) return;
 
+    setIsSubmitting(true);
+
     const data = new FormData();
     data.append("name", form.name);
     data.append("email", form.email);
     data.append("phone", form.phone);
 
-    selectedFiles.forEach((file) => {
-      data.append("files", file);
-    });
-
+    selectedFiles.forEach((file) => data.append("files", file));
     if (editId) {
       data.append("existingFiles", JSON.stringify(filesToKeep));
     }
 
     try {
       if (editId) {
-        await axios.put(`${API_URL}/${editId}`, data, {
-          headers: { "Content-Type": "multipart/form-data" },
-        });
-        alert("Employee updated successfully");
+        await axios.put(`${API_URL}/${editId}`, data);
+        toast.success("Employee updated successfully");
       } else {
-        await axios.post(API_URL, data, {
-          headers: { "Content-Type": "multipart/form-data" },
-        });
-        alert("Employee created successfully");
+        await axios.post(API_URL, data);
+        toast.success("Employee created successfully");
       }
 
       resetForm();
       fetchEmployees();
     } catch (error) {
-      console.error("Error submitting form:", error);
-      alert(error.response?.data?.message || "An error occurred");
+      toast.error(error.response?.data?.message || "Something went wrong");
+    } finally {
+      setIsSubmitting(false);
     }
   };
 
@@ -164,13 +163,16 @@ const EmployeePage = () => {
   const handleDelete = async (id) => {
     if (!window.confirm("Delete this employee?")) return;
 
+    setIsDeleting(true);
+
     try {
       await axios.delete(`${API_URL}/${id}`);
-      alert("Employee deleted successfully");
+      toast.success("Employee deleted successfully");
       fetchEmployees();
     } catch (error) {
-      console.error("Error deleting employee:", error);
-      alert(error.response?.data?.message || "An error occurred");
+      toast.error(error.response?.data?.message || "Delete failed");
+    } finally {
+      setIsDeleting(false);
     }
   };
 
@@ -339,26 +341,29 @@ const EmployeePage = () => {
                 File Viewer
               </h3>
               <div className="flex items-center gap-3">
-                <button
-                  onClick={() => {
-                    setExtractedText("");
-                    handleExtractText(viewFile.url, viewFile.isPdf);
-                  }}
-                  disabled={isExtracting}
-                  className="bg-white text-blue-600 px-4 py-2 rounded-lg text-sm font-medium hover:bg-blue-50 transition-all disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
-                >
-                  {isExtracting ? (
-                    <>
-                      <Loader2 className="w-4 h-4 animate-spin" />
-                      Extracting...
-                    </>
-                  ) : (
-                    <>
-                      <FileText className="w-4 h-4" />
-                      Extract Text
-                    </>
-                  )}
-                </button>
+                {!viewFile?.file?.extractedBills?.length && (
+                  <button
+                    onClick={() => {
+                      setExtractedText("");
+                      handleExtractText(viewFile.url, viewFile.isPdf);
+                    }}
+                    disabled={isExtracting}
+                    className="bg-white text-blue-600 px-4 py-2 rounded-lg text-sm font-medium hover:bg-blue-50 transition-all disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
+                  >
+                    {isExtracting ? (
+                      <>
+                        <Loader2 className="w-4 h-4 animate-spin" />
+                        Extracting...
+                      </>
+                    ) : (
+                      <>
+                        <FileText className="w-4 h-4" />
+                        Extract Text
+                      </>
+                    )}
+                  </button>
+                )}
+
                 <button
                   onClick={() => {
                     setViewFile(null);
@@ -372,6 +377,36 @@ const EmployeePage = () => {
             </div>
 
             <div className="p-6 overflow-auto max-h-[calc(90vh-100px)]">
+              {/* ================= AUTO EXTRACTED BILL DATA ================= */}
+              {viewFile?.file?.extractedBills?.length > 0 && (
+                <div className="mb-6 border-2 border-green-200 rounded-xl bg-green-50 p-4">
+                  <h4 className="font-semibold text-green-800 mb-3">
+                    ✅ Extracted Bill Details
+                  </h4>
+
+                  {viewFile.file.extractedBills.map((bill, index) => (
+                    <div
+                      key={index}
+                      className="mb-3 p-3 bg-white rounded-lg border border-green-200"
+                    >
+                      <p className="text-sm font-medium">
+                        🧾 Bill {index + 1}
+                        {bill.page ? ` (Page ${bill.page})` : ""}
+                      </p>
+                      <p className="text-sm">
+                        🔢 Bill Number: {bill.billNo ?? "Not detected"}
+                      </p>
+                      <p className="text-sm">
+                        💰 Amount: {bill.amount ?? "Not detected"}
+                      </p>
+                      <p className="text-xs text-gray-600">
+                        Confidence: {bill.confidence}
+                      </p>
+                    </div>
+                  ))}
+                </div>
+              )}
+
               <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
                 <div className="space-y-4">
                   {viewFile.isPdf ? (
@@ -619,9 +654,19 @@ const EmployeePage = () => {
                 <button
                   type="button"
                   onClick={handleSubmit}
-                  className="flex-1 bg-linear-to-r from-blue-600 to-indigo-600 text-white py-3 px-4 rounded-xl hover:from-blue-700 hover:to-indigo-700 transition-all font-semibold shadow-lg"
+                  disabled={isSubmitting}
+                  className="flex-1 bg-linear-to-r from-blue-600 to-indigo-600 text-white py-3 px-4 rounded-xl font-semibold shadow-lg flex items-center justify-center gap-2 disabled:opacity-60 disabled:cursor-not-allowed"
                 >
-                  {editId ? "Update Employee" : "Add Employee"}
+                  {isSubmitting ? (
+                    <>
+                      <Loader2 className="w-5 h-5 animate-spin" />
+                      Saving...
+                    </>
+                  ) : editId ? (
+                    "Update Employee"
+                  ) : (
+                    "Add Employee"
+                  )}
                 </button>
 
                 {editId && (
@@ -700,7 +745,11 @@ const EmployeePage = () => {
                                 <button
                                   key={i}
                                   onClick={() =>
-                                    setViewFile({ url: file.url, isPdf })
+                                    setViewFile({
+                                      file,
+                                      url: file.url,
+                                      isPdf,
+                                    })
                                   }
                                   className="group relative hover:scale-110 transition-transform"
                                   title={`View file ${i + 1}`}
@@ -739,10 +788,15 @@ const EmployeePage = () => {
                           </button>
                           <button
                             onClick={() => handleDelete(emp._id)}
-                            className="text-red-600 hover:bg-red-100 p-2 rounded-lg transition-all group"
+                            disabled={isDeleting}
+                            className="text-red-600 hover:bg-red-100 p-2 rounded-lg transition-all group disabled:opacity-50"
                             title="Delete"
                           >
-                            <Trash2 className="w-5 h-5" />
+                            {isDeleting ? (
+                              <Loader2 className="w-4 h-4 animate-spin" />
+                            ) : (
+                              <Trash2 className="w-5 h-5" />
+                            )}
                           </button>
                         </div>
                       </td>

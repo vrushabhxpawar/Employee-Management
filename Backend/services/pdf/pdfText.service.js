@@ -4,6 +4,7 @@ import path from "path";
 import os from "os";
 import { extractBillNumber, extractTotalAmount } from "../../parsers/index.js";
 import { extractTextFromImage } from "../vision/visionText.service.js";
+import BillIndex from "../../models/billIndex.model.js";
 
 /* ================= PDF → IMAGE ================= */
 
@@ -33,21 +34,13 @@ export const extractTextFromPDF = async (pdfPath) => {
       if (!fs.existsSync(imgPath)) break;
 
       const text = await extractTextFromImage(imgPath);
-      console.log(`\n===== PDF PAGE ${page} OCR TEXT =====`);
-      console.log(text);
-      console.log("===== END OCR TEXT =====\n");
 
-      // ✅ Use the new improved parsers
       const billNo = extractBillNumber(text);
       const amount = extractTotalAmount(text);
 
-      // Determine confidence based on what was extracted
-      let confidence = 'high';
-      if (!billNo && !amount) {
-        confidence = 'low';
-      } else if (!billNo || !amount) {
-        confidence = 'medium';
-      }
+      let confidence = "high";
+      if (!billNo && !amount) confidence = "low";
+      else if (!billNo || !amount) confidence = "medium";
 
       bills.push({
         page,
@@ -65,7 +58,6 @@ export const extractTextFromPDF = async (pdfPath) => {
       bills,
     };
   } finally {
-    // Safety cleanup
     let i = 1;
     while (true) {
       const imgPath = `${prefix}-${i}.png`;
