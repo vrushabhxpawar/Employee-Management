@@ -140,7 +140,21 @@ const EmployeePage = () => {
       resetForm();
       fetchEmployees();
     } catch (error) {
-      toast.error(error.response?.data?.message || "Something went wrong");
+      const data = error.response?.data;
+
+      // 🔴 Duplicate bill case
+      if (data?.duplicate && data?.duplicateInfo) {
+        toast.error(
+          `Duplicate Bill Detected\n\nBill No: ${data.duplicateInfo.billNumber}\nUploaded by: ${data.duplicateInfo.uploadedBy}`,
+          {
+            duration: 6000,
+          }
+        );
+        return;
+      }
+
+      // Generic error
+      toast.error(data?.message || "Something went wrong");
     } finally {
       setIsSubmitting(false);
     }

@@ -21,7 +21,6 @@ const buildBillKey = (billNo, amount) =>
 export const createEmployee = asyncHandler(async (req, res) => {
   const { name, email, phone } = req.body;
 
-  /* ================= BASIC VALIDATION ================= */
   if (!name || !email || !phone)
     return res
       .status(400)
@@ -119,12 +118,25 @@ export const createEmployee = asyncHandler(async (req, res) => {
         seenBillKeys.add(billKey);
 
         // global duplicate (image vs pdf, pdf vs pdf, etc)
-        const billExists = await BillIndex.findOne({ billKey });
+        const billExists = await BillIndex.findOne({ billKey }).populate(
+          "sourceEmployee",
+          "name email"
+        );
+
         if (billExists) {
           cleanupFiles();
           return res.status(409).json({
             success: false,
-            message: `Duplicate bill detected (Bill No: ${bill.billNo})`,
+            duplicate: true,
+            message: "Duplicate bill detected",
+            duplicateInfo: {
+              billNumber: bill.billNo,
+              amount: bill.amount,
+              uploadedBy: billExists.sourceEmployee?.name,
+              uploaderEmail: billExists.sourceEmployee?.email,
+              uploadedAt: billExists.createdAt,
+              sourceFile: billExists.sourceFile,
+            },
           });
         }
       }
