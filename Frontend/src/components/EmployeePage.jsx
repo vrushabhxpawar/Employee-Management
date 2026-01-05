@@ -118,43 +118,54 @@ const EmployeePage = () => {
 
     setIsSubmitting(true);
 
-    const data = new FormData();
-    data.append("name", form.name);
-    data.append("email", form.email);
-    data.append("phone", form.phone);
+    const formData = new FormData();
+    formData.append("name", form.name);
+    formData.append("email", form.email);
+    formData.append("phone", form.phone);
 
-    selectedFiles.forEach((file) => data.append("files", file));
+    selectedFiles.forEach((file) => formData.append("files", file));
     if (editId) {
-      data.append("existingFiles", JSON.stringify(filesToKeep));
+      formData.append("existingFiles", JSON.stringify(filesToKeep));
     }
 
     try {
       if (editId) {
-        await axios.put(`${API_URL}/${editId}`, data);
+        await axios.put(`${API_URL}/${editId}`, formData);
         toast.success("Employee updated successfully");
       } else {
-        await axios.post(API_URL, data);
+        await axios.post(API_URL, formData);
         toast.success("Employee created successfully");
       }
 
       resetForm();
       fetchEmployees();
     } catch (error) {
-      const data = error.response?.data;
+      const status = error.response?.status;
+      const responseData = error.response?.data;
 
-      // 🔴 Duplicate bill case
-      if (data?.duplicate && data?.duplicateInfo) {
+      // 🔴 Duplicate bill (with uploader info)
+      if (responseData?.duplicate && responseData?.duplicateInfo) {
         toast.error(
-          `Duplicate Bill Detected\n\nBill No: ${data.duplicateInfo.billNumber}\nUploaded by: ${data.duplicateInfo.uploadedBy}`,
-          {
-            duration: 6000,
-          }
+          `Duplicate Bill Detected\n\nBill No: ${responseData.duplicateInfo.billNumber}\nUploaded by: ${responseData.duplicateInfo.uploadedBy}`,
+          { duration: 6000 }
         );
         return;
       }
 
-      // Generic error
-      toast.error(data?.message || "Something went wrong");
+      // 🔴 Conflict (409)
+      if (status === 409) {
+        toast.error(responseData?.message || "Duplicate detected");
+        return;
+      }
+
+      // 🔴 OCR limit reached
+      if (status === 429) {
+        toast.error(responseData?.message || "OCR limit reached");
+        return;
+      }
+
+      // 🔴 Generic fallback
+      toast.error(responseData?.message || "Something went wrong");
     } finally {
       setIsSubmitting(false);
     }

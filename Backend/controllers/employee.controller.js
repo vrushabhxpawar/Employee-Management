@@ -183,8 +183,28 @@ export const createEmployee = asyncHandler(async (req, res) => {
       data: employee,
     });
   } catch (err) {
+    // Always cleanup uploaded files first
     cleanupFiles();
+
     console.error("Create employee failed:", err);
+
+    // OCR quota exceeded
+    if (err.statusCode === 429) {
+      return res.status(429).json({
+        success: false,
+        message: err.message,
+      });
+    }
+
+    // Duplicate / validation errors
+    if (err.statusCode === 409) {
+      return res.status(409).json({
+        success: false,
+        message: err.message,
+      });
+    }
+
+    // Default server error
     return res.status(500).json({
       success: false,
       message: err.message || "Failed to create employee",
@@ -208,168 +228,210 @@ export const getEmployeeById = asyncHandler(async (req, res) => {
 });
 
 export const updateEmployee = asyncHandler(async (req, res) => {
-  const { name, email, phone, existingFiles } = req.body;
+  try {
+    const { name, email, phone, existingFiles } = req.body;
 
-  /* ================= VALIDATION ================= */
-  if (!name || !email || !phone)
-    return res.status(400).json({
-      success: false,
-      message: "All fields required",
-    });
-
-  if (!isValidEmail(email))
-    return res.status(400).json({
-      success: false,
-      message: "Invalid email",
-    });
-
-  if (!isValidPhone(phone))
-    return res.status(400).json({
-      success: false,
-      message: "Invalid phone",
-    });
-
-  const employee = await Employee.findById(req.params.id);
-  if (!employee)
-    return res.status(404).json({
-      success: false,
-      message: "Employee not found",
-    });
-
-  const emailOwner = await Employee.findOne({
-    email,
-    _id: { $ne: employee._id },
-  });
-  if (emailOwner)
-    return res.status(409).json({
-      success: false,
-      message: "Email already exists",
-    });
-
-  /* ================= FILES TO KEEP ================= */
-  let filesToKeep = [];
-  if (existingFiles) {
-    try {
-      filesToKeep = JSON.parse(existingFiles);
-    } catch {
-      filesToKeep = [];
-    }
-  }
-
-  /* ================= REMOVE FILES ================= */
-  const removedFiles = employee.files.filter(
-    (f) => !filesToKeep.some((k) => k.filename === f.filename)
-  );
-
-  for (const file of removedFiles) {
-    const absPath = path.join(process.cwd(), file.path);
-    if (fs.existsSync(absPath)) fs.unlinkSync(absPath);
-
-    await BillIndex.deleteMany({
-      sourceEmployee: employee._id,
-      sourceFile: file.filename,
-    });
-  }
-
-  /* ================= PROCESS NEW FILES ================= */
-  const updatedFiles = [...filesToKeep];
-  const billsToIndex = [];
-  const seenFileHashes = new Set();
-  const seenBillKeys = new Set();
-
-  if (req.files?.length) {
-    for (const file of req.files) {
-      const absPath = path.resolve(file.path);
-      const fileHash = generateFileHash(absPath);
-
-      /* ---------- SAME UPDATE DUPLICATE FILE ---------- */
-      if (seenFileHashes.has(fileHash)) {
-        fs.unlinkSync(absPath);
-        return res.status(409).json({
-          success: false,
-          message: "Duplicate file in same update",
-        });
-      }
-      seenFileHashes.add(fileHash);
-
-      /* ---------- GLOBAL FILE DUPLICATE ---------- */
-      const fileExists = await Employee.findOne({
-        "files.fileHash": fileHash,
-        _id: { $ne: employee._id },
+    /* ================= VALIDATION ================= */
+    if (!name || !email || !phone)
+      return res.status(400).json({
+        success: false,
+        message: "All fields required",
       });
-      if (fileExists) {
-        fs.unlinkSync(absPath);
-        return res.status(409).json({
-          success: false,
-          message: "This document already exists in system",
-        });
+
+    if (!isValidEmail(email))
+      return res.status(400).json({
+        success: false,
+        message: "Invalid email",
+      });
+
+    if (!isValidPhone(phone))
+      return res.status(400).json({
+        success: false,
+        message: "Invalid phone",
+      });
+
+    const employee = await Employee.findById(req.params.id);
+    if (!employee)
+      return res.status(404).json({
+        success: false,
+        message: "Employee not found",
+      });
+
+    const emailOwner = await Employee.findOne({
+      email,
+      _id: { $ne: employee._id },
+    });
+    if (emailOwner)
+      return res.status(409).json({
+        success: false,
+        message: "Email already exists",
+      });
+
+    /* ================= FILES TO KEEP ================= */
+    let filesToKeep = [];
+    if (existingFiles) {
+      try {
+        filesToKeep = JSON.parse(existingFiles);
+      } catch {
+        filesToKeep = [];
       }
+    }
 
-      /* ---------- OCR + PARSE ---------- */
-      const extractedBills = await extractBillsFromFile(absPath, file.mimetype);
+    /* ================= REMOVE FILES ================= */
+    const removedFiles = employee.files.filter(
+      (f) => !filesToKeep.some((k) => k.filename === f.filename)
+    );
 
-      for (const bill of extractedBills) {
-        if (!bill.billNo || !bill.amount) continue;
+    for (const file of removedFiles) {
+      const absPath = path.join(process.cwd(), file.path);
+      if (fs.existsSync(absPath)) fs.unlinkSync(absPath);
 
-        const billKey = buildBillKey(bill.billNo, bill.amount);
+      await BillIndex.deleteMany({
+        sourceEmployee: employee._id,
+        sourceFile: file.filename,
+      });
+    }
 
-        /* ----- SAME UPDATE DUPLICATE BILL ----- */
-        if (seenBillKeys.has(billKey)) {
+    /* ================= PROCESS NEW FILES ================= */
+    const updatedFiles = [...filesToKeep];
+    const billsToIndex = [];
+    const seenFileHashes = new Set();
+    const seenBillKeys = new Set();
+
+    if (req.files?.length) {
+      for (const file of req.files) {
+        const absPath = path.resolve(file.path);
+        const fileHash = generateFileHash(absPath);
+
+        /* ---------- SAME UPDATE DUPLICATE FILE ---------- */
+        if (seenFileHashes.has(fileHash)) {
           fs.unlinkSync(absPath);
           return res.status(409).json({
             success: false,
-            message: `Duplicate bill in upload (Bill No: ${bill.billNo})`,
+            message: "Duplicate file in same update",
           });
         }
-        seenBillKeys.add(billKey);
+        seenFileHashes.add(fileHash);
 
-        /* ----- GLOBAL DUPLICATE BILL ----- */
-        const exists = await BillIndex.findOne({ billKey });
-        if (exists) {
+        /* ---------- GLOBAL FILE DUPLICATE ---------- */
+        const fileExists = await Employee.findOne({
+          "files.fileHash": fileHash,
+          _id: { $ne: employee._id },
+        });
+        if (fileExists) {
           fs.unlinkSync(absPath);
           return res.status(409).json({
             success: false,
-            message: `Duplicate bill detected (Bill No: ${bill.billNo})`,
+            message: "This document already exists in system",
           });
         }
 
-        billsToIndex.push({
-          billKey,
-          billNumber: bill.billNo.trim(),
-          amount: bill.amount,
-          sourceFile: file.filename,
+        /* ---------- OCR + PARSE ---------- */
+        const extractedBills = await extractBillsFromFile(
+          absPath,
+          file.mimetype
+        );
+
+        for (const bill of extractedBills) {
+          if (!bill.billNo || !bill.amount) continue;
+
+          const billKey = buildBillKey(bill.billNo, bill.amount);
+
+          /* ----- SAME UPDATE DUPLICATE BILL ----- */
+          if (seenBillKeys.has(billKey)) {
+            fs.unlinkSync(absPath);
+            return res.status(409).json({
+              success: false,
+              message: `Duplicate bill in upload (Bill No: ${bill.billNo})`,
+            });
+          }
+          seenBillKeys.add(billKey);
+
+          /* ----- GLOBAL DUPLICATE BILL ----- */
+          const exists = await BillIndex.findOne({ billKey });
+          if (exists) {
+            fs.unlinkSync(absPath);
+            return res.status(409).json({
+              success: false,
+              message: `Duplicate bill detected (Bill No: ${bill.billNo})`,
+            });
+          }
+
+          billsToIndex.push({
+            billKey,
+            billNumber: bill.billNo.trim(),
+            amount: bill.amount,
+            sourceFile: file.filename,
+          });
+        }
+
+        updatedFiles.push({
+          url: `${req.protocol}://${req.get("host")}/uploads/${file.filename}`,
+          filename: file.filename,
+          path: file.path,
+          fileHash,
         });
       }
+    }
 
-      updatedFiles.push({
-        url: `${req.protocol}://${req.get("host")}/uploads/${file.filename}`,
-        filename: file.filename,
-        path: file.path,
-        fileHash,
+    /* ================= SAVE EMPLOYEE ================= */
+    employee.name = name;
+    employee.email = email;
+    employee.phone = phone;
+    employee.files = updatedFiles;
+    await employee.save();
+
+    /* ================= INDEX BILLS ================= */
+    for (const bill of billsToIndex) {
+      await BillIndex.create({
+        ...bill,
+        sourceEmployee: employee._id,
       });
     }
-  }
 
-  /* ================= SAVE EMPLOYEE ================= */
-  employee.name = name;
-  employee.email = email;
-  employee.phone = phone;
-  employee.files = updatedFiles;
-  await employee.save();
+    res.status(200).json({
+      success: true,
+      message: "Employee updated successfully",
+      data: employee,
+    });
+  } catch (err) {
+    // 🧹 Cleanup newly uploaded files
+    if (req.files?.length) {
+      for (const file of req.files) {
+        const absPath = path.resolve(file.path);
+        if (fs.existsSync(absPath)) {
+          try {
+            fs.unlinkSync(absPath);
+          } catch (e) {
+            console.error("Cleanup failed:", absPath, e);
+          }
+        }
+      }
+    }
 
-  /* ================= INDEX BILLS ================= */
-  for (const bill of billsToIndex) {
-    await BillIndex.create({
-      ...bill,
-      sourceEmployee: employee._id,
+    console.error("Update employee failed:", err);
+
+    // OCR quota exceeded
+    if (err.statusCode === 429) {
+      return res.status(429).json({
+        success: false,
+        message: err.message,
+      });
+    }
+
+    // Duplicate bill / duplicate file
+    if (err.statusCode === 409) {
+      return res.status(409).json({
+        success: false,
+        message: err.message,
+      });
+    }
+
+    return res.status(500).json({
+      success: false,
+      message: err.message || "Failed to update employee",
     });
   }
-
-  res.status(200).json({
-    success: true,
-    message: "Employee updated successfully",
-    data: employee,
-  });
 });
 
 const FS = fs.promises;
