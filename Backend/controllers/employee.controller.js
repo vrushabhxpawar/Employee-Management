@@ -11,6 +11,9 @@ import { extractTextFromPDF } from "../services/pdf/pdfText.service.js";
 import { extractTextFromImage } from "../services/vision/visionText.service.js";
 import { extractBillNumber, extractTotalAmount } from "../parsers/index.js";
 import { extractBillsFromFile } from "../services/extraction/extractBillFromFile.js";
+import { isOCRServiceEnabled } from "../services/featureFlag.service.js";
+import { assertOCRAllowed } from "../services/ocr/ocrGate.service.js";
+import { incrementOCRUsage } from "../services/ocr/ocrLimit.service.js";
 
 const isValidEmail = (email) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email);
 const isValidPhone = (phone) => /^[0-9]{10}$/.test(phone);
@@ -37,11 +40,10 @@ export const createEmployee = asyncHandler(async (req, res) => {
       .status(400)
       .json({ success: false, message: "At least one file required" });
 
-  const emailExists = await Employee.findOne({ email });
-  if (emailExists)
-    return res
-      .status(409)
-      .json({ success: false, message: "Email already exists" });
+  const existingEmail = await Employee.findOne({ email });
+  if (existingEmail) {
+    res.status(400).json({ message: "Email already exists" });
+  }
 
   /* ================= HELPERS ================= */
   const cleanupFiles = () => {
@@ -60,6 +62,7 @@ export const createEmployee = asyncHandler(async (req, res) => {
   const validatedFiles = [];
 
   try {
+    const ocr = await assertOCRAllowed();
     for (const file of req.files) {
       const absolutePath = path.resolve(file.path);
       const fileHash = generateFileHash(absolutePath);
@@ -73,16 +76,6 @@ export const createEmployee = asyncHandler(async (req, res) => {
         });
       }
       seenFileHashes.add(fileHash);
-
-      // global file duplicate
-      const fileExists = await Employee.findOne({ "files.fileHash": fileHash });
-      if (fileExists) {
-        cleanupFiles();
-        return res.status(409).json({
-          success: false,
-          message: "This document already exists in system",
-        });
-      }
 
       // OCR + parse ONCE
       const extractedBills = await extractBillsFromFile(

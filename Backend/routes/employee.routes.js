@@ -1,5 +1,5 @@
 import express from "express";
-import {upload} from "../middlewares/upload.js";
+import { upload } from "../middlewares/upload.js";
 import {
   createEmployee,
   getEmployees,
@@ -8,6 +8,7 @@ import {
   getEmployeeById,
 } from "../controllers/employee.controller.js";
 import { extractText } from "../controllers/textExtraction.js";
+import { ocrGuard } from "../middlewares/ocr.guard.js";
 const router = express.Router();
 
 router.get("/", getEmployees);
@@ -16,5 +17,5 @@ router.post("/", upload.array("files", 5), createEmployee);
 router.put("/:id", upload.array("files", 5), updateEmployee);
 
 router.delete("/:id", deleteEmployee);
-router.post("/extract-text", extractText);
+router.post("/extract-text", ocrGuard, upload.single("file"), extractText);
 export default router;

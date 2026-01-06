@@ -32,17 +32,18 @@ const EmployeePage = () => {
   const [searchTerm, setSearchTerm] = useState("");
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [isDeleting, setIsDeleting] = useState(false);
-
+  const [ocrQuota, setOcrQuota] = useState(null);
+  const [paidOcrEnabled, setPaidOcrEnabled] = useState(false);
+  const [ocrToggleLoading, setOcrToggleLoading] = useState(false);
+  const [viewFile, setViewFile] = useState(null);
+  const [extractedText, setExtractedText] = useState("");
+  const [isExtracting, setIsExtracting] = useState(false);
+  const [copied, setCopied] = useState(false);
   const [form, setForm] = useState({
     name: "",
     email: "",
     phone: "",
   });
-
-  const [viewFile, setViewFile] = useState(null);
-  const [extractedText, setExtractedText] = useState("");
-  const [isExtracting, setIsExtracting] = useState(false);
-  const [copied, setCopied] = useState(false);
 
   const fetchEmployees = async () => {
     try {
@@ -56,6 +57,52 @@ const EmployeePage = () => {
   useEffect(() => {
     fetchEmployees();
   }, []);
+
+  useEffect(() => {
+    const fetchOCRState = async () => {
+      try {
+        const [quotaRes, paidRes] = await Promise.all([
+          axios.get(`${API_BASE}/api/admin/ocr-quota`),
+          axios.get(`${API_BASE}/api/admin/ocr-paid-status`),
+        ]);
+        setOcrQuota(quotaRes.data);
+        setPaidOcrEnabled(paidRes.data.enabled);
+      } catch (err) {
+        console.error("Failed to load OCR state", err);
+      }
+    };
+
+    fetchOCRState();
+  }, []);
+
+  const handlePaidOcrToggle = async () => {
+    try {
+      setOcrToggleLoading(true);
+
+      const nextState = !paidOcrEnabled; // 👈 TOGGLE
+
+      const res = await axios.post(`${API_BASE}/api/admin/ocr-toggle-paid`, {
+        enabled: nextState,
+      });
+
+      setPaidOcrEnabled(res.data.enabled);
+
+      if (nextState) {
+        alert("Paid OCR enabled. Charges will apply per request.", {
+          duration: 4000,
+        });
+      } else {
+        toast.success("Paid OCR disabled.");
+      }
+
+      return res.data.enabled;
+    } catch (error) {
+      toast.error(`${error.message}`);
+      return paidOcrEnabled;
+    } finally {
+      setOcrToggleLoading(false);
+    }
+  };
 
   const validate = () => {
     if (!form.name.trim()) {
@@ -142,6 +189,7 @@ const EmployeePage = () => {
     } catch (error) {
       const status = error.response?.status;
       const responseData = error.response?.data;
+      console.log(error)
 
       // 🔴 Duplicate bill (with uploader info)
       if (responseData?.duplicate && responseData?.duplicateInfo) {
@@ -339,13 +387,62 @@ const EmployeePage = () => {
       emp.phone.includes(searchTerm)
   );
 
+  const ocrBlocked = ocrQuota?.exhausted && !paidOcrEnabled;
+
   return (
     <div className="min-h-screen bg-linear-to-br from-blue-50 via-indigo-50 to-purple-50 p-6">
       <div className="max-w-7xl mx-auto mb-8">
-        <h1 className="text-5xl font-bold text-center bg-linear-to-r from-blue-600 via-indigo-600 to-purple-600 bg-clip-text text-transparent mb-2">
-          Employee Management
-        </h1>
-        <p className="text-center text-gray-600">Manage your team with ease</p>
+        <div className="flex flex-col items-center gap-4">
+          <h1 className="text-5xl font-bold text-center bg-linear-to-r from-blue-600 via-indigo-600 to-purple-600 bg-clip-text text-transparent">
+            Employee Management
+          </h1>
+
+          <p className="text-center text-gray-600">
+            Manage your team with ease
+          </p>
+
+          {/* OCR TOGGLE */}
+          {/* STEP-3: Show paid OCR toggle ONLY when free tier is exhausted */}
+          {ocrQuota?.exhausted && (
+            <div className="flex justify-center mt-4">
+              <div className="flex items-center gap-3 bg-white px-4 py-2 rounded-xl shadow border border-red-200">
+                <span className="text-sm font-semibold text-gray-700">
+                  OCR Paid Mode
+                </span>
+
+                <button
+                  type="button"
+                  onClick={handlePaidOcrToggle}
+                  disabled={ocrToggleLoading}
+                  className={`relative inline-flex h-7 w-14 items-center rounded-full transition-all
+                              ${paidOcrEnabled ? "bg-green-500" : "bg-gray-300"}
+                              ${
+                                ocrToggleLoading
+                                  ? "opacity-60 cursor-not-allowed"
+                                  : ""
+                              }
+                                `}
+                >
+                  <span
+                    className={`inline-block h-5 w-5 transform rounded-full bg-white transition-all
+                                  ${
+                                    paidOcrEnabled
+                                      ? "translate-x-8"
+                                      : "translate-x-1"
+                                  }
+    `}
+                  />
+                </button>
+
+                {ocrBlocked && (
+                  <p className="text-xs text-gray-500 mt-1">
+                    Free tier resets on {ocrQuota.resetAt}
+                  </p>
+                )}
+              </div>
+            </div>
+          )}
+        </div>
       </div>
 
       {viewFile && (
@@ -368,14 +465,26 @@ const EmployeePage = () => {
               <div className="flex items-center gap-3">
                 {!viewFile?.file?.extractedBills?.length && (
                   <button
-                    onClick={() => {
+                    onClick={async () => {
+                      // If OCR is blocked, enable paid OCR first
+                      if (ocrBlocked) {
+                        const enabled = await handlePaidOcrToggle();
+                        if (!enabled) return; // stop if toggle failed
+                      }
+
+                      // Now OCR is allowed → extract & upload
                       setExtractedText("");
                       handleExtractText(viewFile.url, viewFile.isPdf);
                     }}
                     disabled={isExtracting}
                     className="bg-white text-blue-600 px-4 py-2 rounded-lg text-sm font-medium hover:bg-blue-50 transition-all disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
                   >
-                    {isExtracting ? (
+                    {ocrBlocked ? (
+                      <>
+                        <AlertCircle className="w-4 h-4" />
+                        Enable Paid OCR
+                      </>
+                    ) : isExtracting ? (
                       <>
                         <Loader2 className="w-4 h-4 animate-spin" />
                         Extracting...

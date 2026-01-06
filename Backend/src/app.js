@@ -4,6 +4,7 @@ dotenv.config();
 import express from "express";
 import connectDB from "../DB/connectDB.js";
 import employeeRoutes from "../routes/employee.routes.js";
+import adminRoutes from "../routes/admin.routes.js";
 import cors from "cors";
 import path from "path";
 import { fileURLToPath } from "url";
@@ -25,6 +26,8 @@ app.use(
   })
 );
 app.use("/api/employees", employeeRoutes);
+app.use("/api/admin" , adminRoutes);
+
 
 connectDB();
 app.listen(PORT, () => {

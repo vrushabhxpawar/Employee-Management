@@ -20,8 +20,10 @@ export const checkOCRLimit = async (date = new Date()) => {
   if (usage.count >= usage.limit) {
     return {
       allowed: false,
+      exhausted : true,
       remaining: 0,
       resetAt: `${month}-01`,
+      pricePerRequest : 2,
       message:
         "You have reached the free OCR limit for this month. Please try again next month.",
     };
