@@ -257,9 +257,7 @@ const EmployeePage = () => {
     setFilesToKeep([]);
   };
 
-  const handleExtractText = async (fileUrl, isPdf) => {
-    setIsExtracting(true);
-    setExtractedText("");
+ // Replace your handleExtractText function with this improved version
 
     try {
       const response = await axios.post(
@@ -327,7 +325,26 @@ const EmployeePage = () => {
     } finally {
       setIsExtracting(false);
     }
-  };
+  } catch (error) {
+    console.error("❌ Error extracting text:", error);
+    
+    let errorMessage = "❌ Error: Unable to extract text from this file.\n\n";
+    
+    if (error.response?.status === 404) {
+      errorMessage += "File not found on server.";
+    } else if (error.response?.data?.message) {
+      errorMessage += error.response.data.message;
+    } else if (error.message) {
+      errorMessage += error.message;
+    } else {
+      errorMessage += "Unknown error occurred.";
+    }
+    
+    setExtractedText(errorMessage);
+  } finally {
+    setIsExtracting(false);
+  }
+};
 
   const handleCopyText = () => {
     navigator.clipboard.writeText(extractedText);
