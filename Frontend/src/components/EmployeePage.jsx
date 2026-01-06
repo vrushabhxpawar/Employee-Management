@@ -18,6 +18,7 @@ import {
   Plus,
   AlertCircle,
 } from "lucide-react";
+import toast from "react-hot-toast";
 
 const API_BASE = import.meta.env.VITE_API_URL;
 const API_URL = `${API_BASE}/api/employees`;
@@ -29,17 +30,20 @@ const EmployeePage = () => {
   const [existingFiles, setExistingFiles] = useState([]);
   const [filesToKeep, setFilesToKeep] = useState([]);
   const [searchTerm, setSearchTerm] = useState("");
-
+  const [isSubmitting, setIsSubmitting] = useState(false);
+  const [isDeleting, setIsDeleting] = useState(false);
+  const [ocrQuota, setOcrQuota] = useState(null);
+  const [paidOcrEnabled, setPaidOcrEnabled] = useState(false);
+  const [ocrToggleLoading, setOcrToggleLoading] = useState(false);
+  const [viewFile, setViewFile] = useState(null);
+  const [extractedText, setExtractedText] = useState("");
+  const [isExtracting, setIsExtracting] = useState(false);
+  const [copied, setCopied] = useState(false);
   const [form, setForm] = useState({
     name: "",
     email: "",
     phone: "",
   });
-
-  const [viewFile, setViewFile] = useState(null);
-  const [extractedText, setExtractedText] = useState("");
-  const [isExtracting, setIsExtracting] = useState(false);
-  const [copied, setCopied] = useState(false);
 
   const fetchEmployees = async () => {
     try {
@@ -54,33 +58,79 @@ const EmployeePage = () => {
     fetchEmployees();
   }, []);
 
+  useEffect(() => {
+    const fetchOCRState = async () => {
+      try {
+        const [quotaRes, paidRes] = await Promise.all([
+          axios.get(`${API_BASE}/api/admin/ocr-quota`),
+          axios.get(`${API_BASE}/api/admin/ocr-paid-status`),
+        ]);
+        setOcrQuota(quotaRes.data);
+        setPaidOcrEnabled(paidRes.data.enabled);
+      } catch (err) {
+        console.error("Failed to load OCR state", err);
+      }
+    };
+
+    fetchOCRState();
+  }, []);
+
+  const handlePaidOcrToggle = async () => {
+    try {
+      setOcrToggleLoading(true);
+
+      const nextState = !paidOcrEnabled; // 👈 TOGGLE
+
+      const res = await axios.post(`${API_BASE}/api/admin/ocr-toggle-paid`, {
+        enabled: nextState,
+      });
+
+      setPaidOcrEnabled(res.data.enabled);
+
+      if (nextState) {
+        alert("Paid OCR enabled. Charges will apply per request.", {
+          duration: 4000,
+        });
+      } else {
+        toast.success("Paid OCR disabled.");
+      }
+
+      return res.data.enabled;
+    } catch (error) {
+      toast.error(`${error.message}`);
+      return paidOcrEnabled;
+    } finally {
+      setOcrToggleLoading(false);
+    }
+  };
+
   const validate = () => {
     if (!form.name.trim()) {
-      alert("Name is required");
+      toast.error("Name is required");
       return false;
     }
     if (!form.email.trim()) {
-      alert("Email is required");
+      toast.error("Email is required");
       return false;
     }
     if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(form.email)) {
-      alert("Invalid email format");
+      toast.error("Invalid email format");
       return false;
     }
     if (!form.phone.trim()) {
-      alert("Phone is required");
+      toast.error("Phone is required");
       return false;
     }
     if (!/^[0-9]{10}$/.test(form.phone)) {
-      alert("Phone must be 10 digits");
+      toast.error("Phone must be 10 digits");
       return false;
     }
     if (!editId && selectedFiles.length === 0) {
-      alert("At least one file is required");
+      toast.error("At least one file is required");
       return false;
     }
     if (editId && filesToKeep.length === 0 && selectedFiles.length === 0) {
-      alert("At least one file is required");
+      toast.error("At least one file is required");
       return false;
     }
     return true;
@@ -113,37 +163,59 @@ const EmployeePage = () => {
     e.preventDefault();
     if (!validate()) return;
 
-    const data = new FormData();
-    data.append("name", form.name);
-    data.append("email", form.email);
-    data.append("phone", form.phone);
+    setIsSubmitting(true);
 
-    selectedFiles.forEach((file) => {
-      data.append("files", file);
-    });
+    const formData = new FormData();
+    formData.append("name", form.name);
+    formData.append("email", form.email);
+    formData.append("phone", form.phone);
 
+    selectedFiles.forEach((file) => formData.append("files", file));
     if (editId) {
-      data.append("existingFiles", JSON.stringify(filesToKeep));
+      formData.append("existingFiles", JSON.stringify(filesToKeep));
     }
 
     try {
       if (editId) {
-        await axios.put(`${API_URL}/${editId}`, data, {
-          headers: { "Content-Type": "multipart/form-data" },
-        });
-        alert("Employee updated successfully");
+        await axios.put(`${API_URL}/${editId}`, formData);
+        toast.success("Employee updated successfully");
       } else {
-        await axios.post(API_URL, data, {
-          headers: { "Content-Type": "multipart/form-data" },
-        });
-        alert("Employee created successfully");
+        await axios.post(API_URL, formData);
+        toast.success("Employee created successfully");
       }
 
       resetForm();
       fetchEmployees();
     } catch (error) {
-      console.error("Error submitting form:", error);
-      alert(error.response?.data?.message || "An error occurred");
+      const status = error.response?.status;
+      const responseData = error.response?.data;
+      console.log(error)
+
+      // 🔴 Duplicate bill (with uploader info)
+      if (responseData?.duplicate && responseData?.duplicateInfo) {
+        toast.error(
+          `Duplicate Bill Detected\n\nBill No: ${responseData.duplicateInfo.billNumber}\nUploaded by: ${responseData.duplicateInfo.uploadedBy}`,
+          { duration: 6000 }
+        );
+        return;
+      }
+
+      // 🔴 Conflict (409)
+      if (status === 409) {
+        toast.error(responseData?.message || "Duplicate detected");
+        return;
+      }
+
+      // 🔴 OCR limit reached
+      if (status === 429) {
+        toast.error(responseData?.message || "OCR limit reached");
+        return;
+      }
+
+      // 🔴 Generic fallback
+      toast.error(responseData?.message || "Something went wrong");
+    } finally {
+      setIsSubmitting(false);
     }
   };
 
@@ -164,13 +236,16 @@ const EmployeePage = () => {
   const handleDelete = async (id) => {
     if (!window.confirm("Delete this employee?")) return;
 
+    setIsDeleting(true);
+
     try {
       await axios.delete(`${API_URL}/${id}`);
-      alert("Employee deleted successfully");
+      toast.success("Employee deleted successfully");
       fetchEmployees();
     } catch (error) {
-      console.error("Error deleting employee:", error);
-      alert(error.response?.data?.message || "An error occurred");
+      toast.error(error.response?.data?.message || "Delete failed");
+    } finally {
+      setIsDeleting(false);
     }
   };
 
@@ -184,71 +259,71 @@ const EmployeePage = () => {
 
  // Replace your handleExtractText function with this improved version
 
-const handleExtractText = async (fileUrl, isPdf) => {
-  setIsExtracting(true);
-  setExtractedText("");
-
-  try {
-    const response = await axios.post(
-      `${API_URL}/extract-text`,
-      {
-        fileUrl: fileUrl,
-        fileType: isPdf ? "pdf" : "image",
-        extractFields: ["bill_number", "total_amount"], // Specify what to extract
-      },
-      {
-        withCredentials: true,
-        headers: {
-          "Content-Type": "application/json",
+    try {
+      const response = await axios.post(
+        `${API_URL}/extract-text`,
+        {
+          fileUrl,
+          fileType: isPdf ? "pdf" : "image",
         },
-      }
-    );
+        {
+          withCredentials: true,
+          headers: { "Content-Type": "application/json" },
+        }
+      );
 
-    console.log("✅ API Response:", response.data);
+      console.log("✅ API Response:", response.data);
 
-    if (response.data.extractedData) {
-      const { bill_number, total_amount } = response.data.extractedData;
-      
-      // Format the display nicely
-      let displayText = "📄 BILL INFORMATION\n";
-      displayText += "═".repeat(40) + "\n\n";
-      
-      if (bill_number) {
-        displayText += `🔢 Bill Number: ${bill_number}\n`;
-      } else {
-        displayText += `🔢 Bill Number: Not detected\n`;
+      /* ================= IMAGE RESPONSE ================= */
+      if (!isPdf && response.data.extractedData) {
+        const { bill_number, total_amount } = response.data.extractedData;
+
+        let displayText = "📄 BILL INFORMATION\n";
+        displayText += "═".repeat(40) + "\n\n";
+        displayText += `🔢 Bill Number: ${bill_number ?? "Not detected"}\n`;
+        displayText += `💰 Total Amount: ${total_amount ?? "Not detected"}\n`;
+        displayText += "\n" + "═".repeat(40);
+
+        setExtractedText(displayText);
+        return;
       }
-      
-      if (total_amount) {
-        displayText += `💰 Total Amount: £${total_amount}\n`;
-      } else {
-        displayText += `💰 Total Amount: Not detected\n`;
+
+      /* ================= PDF RESPONSE ================= */
+      if (isPdf && response.data.bills?.length) {
+        let displayText = "📄 MULTIPLE BILLS DETECTED\n";
+        displayText += "═".repeat(40) + "\n\n";
+
+        response.data.bills.forEach((bill, index) => {
+          displayText += `🧾 Bill ${index + 1} (Page ${bill.page})\n`;
+          displayText += `🔢 Bill Number: ${bill.billNo ?? "Not detected"}\n`;
+          displayText += `💰 Amount: ${bill.amount ?? "Not detected"}\n`;
+          displayText += `📊 Confidence: ${bill.confidence}\n`;
+          displayText += "─".repeat(40) + "\n";
+        });
+
+        setExtractedText(displayText);
+        return;
       }
-      
-      displayText += "\n" + "═".repeat(40);
-      displayText += "\n\n📋 Full Extracted Text:\n\n";
-      displayText += response.data.text || "No text found";
-      
-      setExtractedText(displayText);
-      
-      // If nothing was found, show a helpful message
-      if (!bill_number && !total_amount) {
-        setExtractedText(
-          "⚠️ Could not extract bill number or total amount.\n\n" +
-          "Tips for better results:\n" +
-          "• Ensure the image is clear and well-lit\n" +
-          "• Make sure text is not blurry or rotated\n" +
-          "• Try uploading a higher resolution image\n\n" +
-          "Full extracted text:\n\n" +
-          (response.data.text || "No text could be read from this file")
-        );
-      }
-    } else {
+
+      /* ================= FALLBACK ================= */
       setExtractedText(
         "⚠️ No data could be extracted.\n\n" +
-        "Full text:\n\n" +
-        (response.data.text || "No text detected")
+          "The file was processed, but no bill data was detected."
       );
+    } catch (error) {
+      console.error("❌ Error extracting text:", error);
+
+      let errorMessage = "❌ Error: Unable to extract text.\n\n";
+
+      if (error.response?.data?.message) {
+        errorMessage += error.response.data.message;
+      } else if (error.message) {
+        errorMessage += error.message;
+      }
+
+      setExtractedText(errorMessage);
+    } finally {
+      setIsExtracting(false);
     }
   } catch (error) {
     console.error("❌ Error extracting text:", error);
@@ -329,13 +404,62 @@ const handleExtractText = async (fileUrl, isPdf) => {
       emp.phone.includes(searchTerm)
   );
 
+  const ocrBlocked = ocrQuota?.exhausted && !paidOcrEnabled;
+
   return (
-    <div className="min-h-screen bg-gradient-to-br from-blue-50 via-indigo-50 to-purple-50 p-6">
+    <div className="min-h-screen bg-linear-to-br from-blue-50 via-indigo-50 to-purple-50 p-6">
       <div className="max-w-7xl mx-auto mb-8">
-        <h1 className="text-5xl font-bold text-center bg-gradient-to-r from-blue-600 via-indigo-600 to-purple-600 bg-clip-text text-transparent mb-2">
-          Employee Management
-        </h1>
-        <p className="text-center text-gray-600">Manage your team with ease</p>
+        <div className="flex flex-col items-center gap-4">
+          <h1 className="text-5xl font-bold text-center bg-linear-to-r from-blue-600 via-indigo-600 to-purple-600 bg-clip-text text-transparent">
+            Employee Management
+          </h1>
+
+          <p className="text-center text-gray-600">
+            Manage your team with ease
+          </p>
+
+          {/* OCR TOGGLE */}
+          {/* STEP-3: Show paid OCR toggle ONLY when free tier is exhausted */}
+          {ocrQuota?.exhausted && (
+            <div className="flex justify-center mt-4">
+              <div className="flex items-center gap-3 bg-white px-4 py-2 rounded-xl shadow border border-red-200">
+                <span className="text-sm font-semibold text-gray-700">
+                  OCR Paid Mode
+                </span>
+
+                <button
+                  type="button"
+                  onClick={handlePaidOcrToggle}
+                  disabled={ocrToggleLoading}
+                  className={`relative inline-flex h-7 w-14 items-center rounded-full transition-all
+                              ${paidOcrEnabled ? "bg-green-500" : "bg-gray-300"}
+                              ${
+                                ocrToggleLoading
+                                  ? "opacity-60 cursor-not-allowed"
+                                  : ""
+                              }
+                                `}
+                >
+                  <span
+                    className={`inline-block h-5 w-5 transform rounded-full bg-white transition-all
+                                  ${
+                                    paidOcrEnabled
+                                      ? "translate-x-8"
+                                      : "translate-x-1"
+                                  }
+    `}
+                  />
+                </button>
+
+                {ocrBlocked && (
+                  <p className="text-xs text-gray-500 mt-1">
+                    Free tier resets on {ocrQuota.resetAt}
+                  </p>
+                )}
+              </div>
+            </div>
+          )}
+        </div>
       </div>
 
       {viewFile && (
@@ -350,32 +474,47 @@ const handleExtractText = async (fileUrl, isPdf) => {
             className="bg-white rounded-2xl max-w-6xl max-h-[90vh] w-full overflow-hidden shadow-2xl"
             onClick={(e) => e.stopPropagation()}
           >
-            <div className="bg-gradient-to-r from-blue-600 to-indigo-600 text-white p-5 flex justify-between items-center">
+            <div className="bg-linear-to-r from-blue-600 to-indigo-600 text-white p-5 flex justify-between items-center">
               <h3 className="text-xl font-semibold flex items-center gap-2">
                 <FileText className="w-6 h-6" />
                 File Viewer
               </h3>
               <div className="flex items-center gap-3">
-                <button
-                  onClick={() => {
-                    setExtractedText("");
-                    handleExtractText(viewFile.url, viewFile.isPdf);
-                  }}
-                  disabled={isExtracting}
-                  className="bg-white text-blue-600 px-4 py-2 rounded-lg text-sm font-medium hover:bg-blue-50 transition-all disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
-                >
-                  {isExtracting ? (
-                    <>
-                      <Loader2 className="w-4 h-4 animate-spin" />
-                      Extracting...
-                    </>
-                  ) : (
-                    <>
-                      <FileText className="w-4 h-4" />
-                      Extract Text
-                    </>
-                  )}
-                </button>
+                {!viewFile?.file?.extractedBills?.length && (
+                  <button
+                    onClick={async () => {
+                      // If OCR is blocked, enable paid OCR first
+                      if (ocrBlocked) {
+                        const enabled = await handlePaidOcrToggle();
+                        if (!enabled) return; // stop if toggle failed
+                      }
+
+                      // Now OCR is allowed → extract & upload
+                      setExtractedText("");
+                      handleExtractText(viewFile.url, viewFile.isPdf);
+                    }}
+                    disabled={isExtracting}
+                    className="bg-white text-blue-600 px-4 py-2 rounded-lg text-sm font-medium hover:bg-blue-50 transition-all disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
+                  >
+                    {ocrBlocked ? (
+                      <>
+                        <AlertCircle className="w-4 h-4" />
+                        Enable Paid OCR
+                      </>
+                    ) : isExtracting ? (
+                      <>
+                        <Loader2 className="w-4 h-4 animate-spin" />
+                        Extracting...
+                      </>
+                    ) : (
+                      <>
+                        <FileText className="w-4 h-4" />
+                        Extract Text
+                      </>
+                    )}
+                  </button>
+                )}
+
                 <button
                   onClick={() => {
                     setViewFile(null);
@@ -389,6 +528,36 @@ const handleExtractText = async (fileUrl, isPdf) => {
             </div>
 
             <div className="p-6 overflow-auto max-h-[calc(90vh-100px)]">
+              {/* ================= AUTO EXTRACTED BILL DATA ================= */}
+              {viewFile?.file?.extractedBills?.length > 0 && (
+                <div className="mb-6 border-2 border-green-200 rounded-xl bg-green-50 p-4">
+                  <h4 className="font-semibold text-green-800 mb-3">
+                    ✅ Extracted Bill Details
+                  </h4>
+
+                  {viewFile.file.extractedBills.map((bill, index) => (
+                    <div
+                      key={index}
+                      className="mb-3 p-3 bg-white rounded-lg border border-green-200"
+                    >
+                      <p className="text-sm font-medium">
+                        🧾 Bill {index + 1}
+                        {bill.page ? ` (Page ${bill.page})` : ""}
+                      </p>
+                      <p className="text-sm">
+                        🔢 Bill Number: {bill.billNo ?? "Not detected"}
+                      </p>
+                      <p className="text-sm">
+                        💰 Amount: {bill.amount ?? "Not detected"}
+                      </p>
+                      <p className="text-xs text-gray-600">
+                        Confidence: {bill.confidence}
+                      </p>
+                    </div>
+                  ))}
+                </div>
+              )}
+
               <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
                 <div className="space-y-4">
                   {viewFile.isPdf ? (
@@ -636,9 +805,19 @@ const handleExtractText = async (fileUrl, isPdf) => {
                 <button
                   type="button"
                   onClick={handleSubmit}
-                  className="flex-1 bg-gradient-to-r from-blue-600 to-indigo-600 text-white py-3 px-4 rounded-xl hover:from-blue-700 hover:to-indigo-700 transition-all font-semibold shadow-lg"
+                  disabled={isSubmitting}
+                  className="flex-1 bg-linear-to-r from-blue-600 to-indigo-600 text-white py-3 px-4 rounded-xl font-semibold shadow-lg flex items-center justify-center gap-2 disabled:opacity-60 disabled:cursor-not-allowed"
                 >
-                  {editId ? "Update Employee" : "Add Employee"}
+                  {isSubmitting ? (
+                    <>
+                      <Loader2 className="w-5 h-5 animate-spin" />
+                      Saving...
+                    </>
+                  ) : editId ? (
+                    "Update Employee"
+                  ) : (
+                    "Add Employee"
+                  )}
                 </button>
 
                 {editId && (
@@ -657,7 +836,7 @@ const handleExtractText = async (fileUrl, isPdf) => {
 
         <div className="lg:col-span-2">
           <div className="bg-white rounded-2xl shadow-xl overflow-hidden border border-gray-100">
-            <div className="bg-gradient-to-r from-blue-600 to-indigo-600 p-6">
+            <div className="bg-linear-to-r from-blue-600 to-indigo-600 p-6">
               <h2 className="text-2xl font-bold text-white mb-4">
                 Employees List
               </h2>
@@ -675,7 +854,7 @@ const handleExtractText = async (fileUrl, isPdf) => {
 
             <div className="overflow-x-auto">
               <table className="w-full">
-                <thead className="bg-gradient-to-r from-gray-50 to-gray-100">
+                <thead className="bg-linear-to-r from-gray-50 to-gray-100">
                   <tr>
                     <th className="p-4 text-left font-semibold text-gray-700">
                       Name
@@ -717,7 +896,11 @@ const handleExtractText = async (fileUrl, isPdf) => {
                                 <button
                                   key={i}
                                   onClick={() =>
-                                    setViewFile({ url: file.url, isPdf })
+                                    setViewFile({
+                                      file,
+                                      url: file.url,
+                                      isPdf,
+                                    })
                                   }
                                   className="group relative hover:scale-110 transition-transform"
                                   title={`View file ${i + 1}`}
@@ -733,7 +916,7 @@ const handleExtractText = async (fileUrl, isPdf) => {
                                       className="w-12 h-12 object-cover rounded-lg border-2 border-gray-300 hover:border-blue-500 transition-all shadow-sm"
                                     />
                                   )}
-                                  <span className="absolute -bottom-1 -right-1 bg-gradient-to-r from-blue-600 to-indigo-600 text-white text-xs rounded-full w-5 h-5 flex items-center justify-center font-semibold shadow-lg">
+                                  <span className="absolute -bottom-1 -right-1 bg-linear-to-r from-blue-600 to-indigo-600 text-white text-xs rounded-full w-5 h-5 flex items-center justify-center font-semibold shadow-lg">
                                     {i + 1}
                                   </span>
                                 </button>
@@ -756,10 +939,15 @@ const handleExtractText = async (fileUrl, isPdf) => {
                           </button>
                           <button
                             onClick={() => handleDelete(emp._id)}
-                            className="text-red-600 hover:bg-red-100 p-2 rounded-lg transition-all group"
+                            disabled={isDeleting}
+                            className="text-red-600 hover:bg-red-100 p-2 rounded-lg transition-all group disabled:opacity-50"
                             title="Delete"
                           >
-                            <Trash2 className="w-5 h-5" />
+                            {isDeleting ? (
+                              <Loader2 className="w-4 h-4 animate-spin" />
+                            ) : (
+                              <Trash2 className="w-5 h-5" />
+                            )}
                           </button>
                         </div>
                       </td>
