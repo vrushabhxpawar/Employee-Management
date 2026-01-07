@@ -19,6 +19,7 @@ import {
   AlertCircle,
 } from "lucide-react";
 import toast from "react-hot-toast";
+import { format } from "date-fns";
 
 const API_BASE = import.meta.env.VITE_API_URL;
 const API_URL = `${API_BASE}/api/employees`;
@@ -44,6 +45,7 @@ const EmployeePage = () => {
     email: "",
     phone: "",
   });
+  const [ocrCost, setOcrCost] = useState(0);
 
   const fetchEmployees = async () => {
     try {
@@ -54,26 +56,20 @@ const EmployeePage = () => {
     }
   };
 
-  useEffect(() => {
-    fetchEmployees();
-  }, []);
+  const fetchOCRState = async () => {
+    try {
+      const [quotaRes, paidRes] = await Promise.all([
+        axios.get(`${API_BASE}/api/admin/ocr-quota`),
+        axios.get(`${API_BASE}/api/admin/ocr-paid-status`),
+      ]);
+      setOcrQuota(quotaRes.data);
+      setPaidOcrEnabled(paidRes.data.enabled);
 
-  useEffect(() => {
-    const fetchOCRState = async () => {
-      try {
-        const [quotaRes, paidRes] = await Promise.all([
-          axios.get(`${API_BASE}/api/admin/ocr-quota`),
-          axios.get(`${API_BASE}/api/admin/ocr-paid-status`),
-        ]);
-        setOcrQuota(quotaRes.data);
-        setPaidOcrEnabled(paidRes.data.enabled);
-      } catch (err) {
-        console.error("Failed to load OCR state", err);
-      }
-    };
-
-    fetchOCRState();
-  }, []);
+      setOcrCost(quotaRes.data.totalPaid.toFixed(2) || 0);
+    } catch (err) {
+      console.error("Failed to load OCR state", err);
+    }
+  };
 
   const handlePaidOcrToggle = async () => {
     try {
@@ -84,7 +80,7 @@ const EmployeePage = () => {
       const res = await axios.post(`${API_BASE}/api/admin/ocr-toggle-paid`, {
         enabled: nextState,
       });
-
+      console.log(res)
       setPaidOcrEnabled(res.data.enabled);
 
       if (nextState) {
@@ -94,7 +90,7 @@ const EmployeePage = () => {
       } else {
         toast.success("Paid OCR disabled.");
       }
-
+      await fetchOCRState();
       return res.data.enabled;
     } catch (error) {
       toast.error(`${error.message}`);
@@ -186,15 +182,22 @@ const EmployeePage = () => {
 
       resetForm();
       fetchEmployees();
+      fetchOCRState();
     } catch (error) {
       const status = error.response?.status;
       const responseData = error.response?.data;
-      console.log(error)
 
       // 🔴 Duplicate bill (with uploader info)
       if (responseData?.duplicate && responseData?.duplicateInfo) {
         toast.error(
-          `Duplicate Bill Detected\n\nBill No: ${responseData.duplicateInfo.billNumber}\nUploaded by: ${responseData.duplicateInfo.uploadedBy}`,
+          `Duplicate Bill Detected\n\nBill No: ${
+            responseData.duplicateInfo.billNumber
+          }\nUploaded by: ${
+            responseData.duplicateInfo.uploadedBy
+          }\nUploaded on : ${format(
+            new Date(responseData.duplicateInfo.uploadedAt),
+            "dd MMM yyyy"
+          )}`,
           { duration: 6000 }
         );
         return;
@@ -257,7 +260,9 @@ const EmployeePage = () => {
     setFilesToKeep([]);
   };
 
- // Replace your handleExtractText function with this improved version
+  const handleExtractText = async (fileUrl, isPdf) => {
+    setIsExtracting(true);
+    setExtractedText("");
 
     try {
       const response = await axios.post(
@@ -271,8 +276,6 @@ const EmployeePage = () => {
           headers: { "Content-Type": "application/json" },
         }
       );
-
-      console.log("✅ API Response:", response.data);
 
       /* ================= IMAGE RESPONSE ================= */
       if (!isPdf && response.data.extractedData) {
@@ -325,26 +328,7 @@ const EmployeePage = () => {
     } finally {
       setIsExtracting(false);
     }
-  } catch (error) {
-    console.error("❌ Error extracting text:", error);
-    
-    let errorMessage = "❌ Error: Unable to extract text from this file.\n\n";
-    
-    if (error.response?.status === 404) {
-      errorMessage += "File not found on server.";
-    } else if (error.response?.data?.message) {
-      errorMessage += error.response.data.message;
-    } else if (error.message) {
-      errorMessage += error.message;
-    } else {
-      errorMessage += "Unknown error occurred.";
-    }
-    
-    setExtractedText(errorMessage);
-  } finally {
-    setIsExtracting(false);
-  }
-};
+  };
 
   const handleCopyText = () => {
     navigator.clipboard.writeText(extractedText);
@@ -406,6 +390,11 @@ const EmployeePage = () => {
 
   const ocrBlocked = ocrQuota?.exhausted && !paidOcrEnabled;
 
+  useEffect(() => {
+    fetchEmployees();
+    fetchOCRState();
+  }, []);
+
   return (
     <div className="min-h-screen bg-linear-to-br from-blue-50 via-indigo-50 to-purple-50 p-6">
       <div className="max-w-7xl mx-auto mb-8">
@@ -419,12 +408,12 @@ const EmployeePage = () => {
           </p>
 
           {/* OCR TOGGLE */}
-          {/* STEP-3: Show paid OCR toggle ONLY when free tier is exhausted */}
           {ocrQuota?.exhausted && (
             <div className="flex justify-center mt-4">
               <div className="flex items-center gap-3 bg-white px-4 py-2 rounded-xl shadow border border-red-200">
                 <span className="text-sm font-semibold text-gray-700">
                   OCR Paid Mode
+                   {/* STEP-3: Show paid OCR toggle ONLY when free tier is exhausted */}
                 </span>
 
                 <button
@@ -461,6 +450,45 @@ const EmployeePage = () => {
           )}
         </div>
       </div>
+
+      {/* ================= OCR USAGE STATUS ================= */}
+      {ocrQuota && (
+        <div className="max-w-7xl mx-auto mb-6">
+          <div className="bg-white border border-gray-200 rounded-xl p-4 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 shadow-sm">
+            {/* Left */}
+            <div>
+              <p className="text-sm text-gray-500">OCR Usage (This Month)</p>
+              <p className="text-lg font-semibold text-gray-800">
+                {paidOcrEnabled
+                  ? ocrQuota.used
+                  : `${ocrQuota.used} / ${ocrQuota.limit}`}{" "}
+                scans
+              </p>
+
+              {!paidOcrEnabled && ocrQuota.remaining === 0 && (
+                <p className="text-sm text-red-600 mt-1">
+                  Free OCR limit exhausted. Enable paid OCR to continue.
+                </p>
+              )}
+            </div>
+
+            {/* Right */}
+            <div className="text-right">
+              <p className="text-sm text-gray-500">
+                {paidOcrEnabled ? "Paid OCR Cost" : "OCR Cost"}
+              </p>
+
+              <p className="text-xl font-bold text-indigo-600">
+                ₹{paidOcrEnabled ? ocrCost : 0}
+              </p>
+
+              {!paidOcrEnabled && (
+                <p className="text-xs text-gray-500 mt-1">Free tier</p>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
 
       {viewFile && (
         <div

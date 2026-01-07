@@ -53,17 +53,21 @@ router.get(
 router.post(
   "/ocr-toggle-paid",
   asyncHandler(async (req, res) => {
-    const { enabled } = req.body;
-
-    const flag = await FeatureFlag.findOneAndUpdate(
-      { key: "OCR_PAID_CONSENT" },
-      { enabled: Boolean(enabled) },
-      { upsert: true, new: true }
-    );
-
-    res.json({
-      enabled: flag.enabled,
-    });
+    try {
+      const { enabled } = req.body;
+  
+      const flag = await FeatureFlag.findOneAndUpdate(
+        { key: "OCR_PAID_CONSENT" },
+        { enabled: Boolean(enabled) },
+        { upsert: true, new: true }
+      );
+  
+      res.json({
+        enabled: flag.enabled,
+      });
+    } catch (error) {
+      console.log(error.message);
+    }
   })
 );
 
@@ -73,14 +77,20 @@ router.post(
 router.get(
   "/ocr-quota",
   asyncHandler(async (req, res) => {
-    const quota = await checkOCRLimit();
-
+    const paidEnabled = await isPaidOCRAllowed();
+    const quota = await checkOCRLimit(new Date(), paidEnabled);
+    console.log(quota);
     res.json({
+      mode: quota.mode,
       allowed: quota.allowed,
-      exhausted: !quota.allowed,
+      exhausted: quota.exhausted ?? false,
+      used: quota.used ?? 0,
+      limit: quota.limit ?? 1000,
       remaining: quota.remaining ?? 0,
+      paidUsed: quota.used ?? 0,
+      totalPaid: quota?.totalPaid ?? 0,
+      pricePerRequest: quota.pricePerRequest ?? 0,
       resetAt: quota.resetAt,
-      pricePerRequest: 2, // or from env
     });
   })
 );

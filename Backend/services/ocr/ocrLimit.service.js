@@ -1,10 +1,13 @@
 import OCRUsage from "../../models/ocrUsage.model.js";
 
 const getMonthKey = (date = new Date()) => {
-  return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}`;
+  return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2,"0")}`;
 };
 
-export const checkOCRLimit = async (date = new Date()) => {
+export const checkOCRLimit = async (
+  date = new Date(),
+  isPaidEnabled = false
+) => {
   const month = getMonthKey(date);
 
   let usage = await OCRUsage.findOne({ month });
@@ -14,37 +17,74 @@ export const checkOCRLimit = async (date = new Date()) => {
       month,
       count: 0,
       limit: 1000,
+      paidCount: 0,
+      paidAmount: 0,
     });
   }
 
-  if (usage.count >= usage.limit) {
+  // Free tier available
+  if (usage.count < usage.limit) {
     return {
-      allowed: false,
-      exhausted : true,
-      remaining: 0,
-      resetAt: `${month}-01`,
-      pricePerRequest : 2,
-      message:
-        "You have reached the free OCR limit for this month. Please try again next month.",
+      allowed: true,
+      mode: "free",
+      remaining: usage.limit - usage.count,
+      used: usage.count,
+      limit : usage.limit,
+      
     };
   }
 
+  // Free exhausted
+  if (!isPaidEnabled) {
+    return {
+      allowed: false,
+      exhausted: true,
+      mode: "blocked",
+      resetAt: `${month}-01`,
+      message: "Free OCR limit exhausted. Enable paid OCR to continue.",
+    };
+  }
+
+  // Paid mode
   return {
     allowed: true,
-    remaining: usage.limit - usage.count,
-    used: usage.count,
+    mode: "paid",
+    pricePerRequest: 0.1, 
+    used : usage.paidCount,
+    totalPaid: usage.paidAmount,
+    limit : null,
+    remaining : null,
+    exhausted : true,
   };
 };
 
-export const incrementOCRUsage = async (date = new Date()) => {
+export const incrementOCRUsage = async (
+  { mode = "free", price = 0, date = new Date() } = {} // ✅ THIS IS THE FIX
+) => {
   const month = getMonthKey(date);
 
-  await OCRUsage.updateOne(
-    { month },
-    {
-      $inc: { count: 1 },
-      $set: { updatedAt: new Date() },
-    },
-    { upsert: true }
-  );
+  if (mode === "free") {
+    await OCRUsage.updateOne(
+      { month },
+      {
+        $inc: { count: 1 },
+        $set: { updatedAt: new Date() },
+      },
+      { upsert: true }
+    );
+  }
+
+  if (mode === "paid") {
+    await OCRUsage.updateOne(
+      { month },
+      {
+        $inc: {
+          paidCount: 1,
+          paidAmount: price,
+        },
+        $set: { updatedAt: new Date() },
+      },
+      { upsert: true }
+    );
+  }
 };
