@@ -113,7 +113,7 @@ export const createEmployee = asyncHandler(async (req, res) => {
         // global duplicate (image vs pdf, pdf vs pdf, etc)
         const billExists = await BillIndex.findOne({ billKey }).populate(
           "sourceEmployee",
-          "name email"
+          "name"
         );
 
         if (billExists) {
@@ -126,7 +126,6 @@ export const createEmployee = asyncHandler(async (req, res) => {
               billNumber: bill.billNo,
               amount: bill.amount,
               uploadedBy: billExists.sourceEmployee?.name,
-              uploaderEmail: billExists.sourceEmployee?.email,
               uploadedAt: billExists.createdAt,
               sourceFile: billExists.sourceFile,
             },
