@@ -39,7 +39,6 @@ const EmployeePage = () => {
   const [viewFile, setViewFile] = useState(null);
   const [extractedText, setExtractedText] = useState("");
   const [isExtracting, setIsExtracting] = useState(false);
-  const [copied, setCopied] = useState(false);
   const [form, setForm] = useState({
     name: "",
     email: "",
@@ -51,8 +50,16 @@ const EmployeePage = () => {
     try {
       const res = await axios.get(API_URL);
       setEmployees(res.data.data || res.data);
+      localStorage.setItem(
+        "cachedEmployees",
+        JSON.stringify(res.data.data || res.data)
+      );
     } catch (error) {
-      console.error("Error fetching employees:", error);
+      const cached = localStorage.getItem("cachedEmployees");
+      if (!cached) {
+        console.log(error.message);
+      }
+      if (cached) setEmployees(JSON.parse(cached));
     }
   };
 
@@ -80,7 +87,7 @@ const EmployeePage = () => {
       const res = await axios.post(`${API_BASE}/api/admin/ocr-toggle-paid`, {
         enabled: nextState,
       });
-      console.log(res)
+      console.log(res);
       setPaidOcrEnabled(res.data.enabled);
 
       if (nextState) {
@@ -184,41 +191,63 @@ const EmployeePage = () => {
       fetchEmployees();
       fetchOCRState();
     } catch (error) {
-      const status = error.response?.status;
+      fetchOCRState()
       const responseData = error.response?.data;
 
-      // 🔴 Duplicate bill (with uploader info)
-      if (responseData?.duplicate && responseData?.duplicateInfo) {
-        toast.error(
-          `Duplicate Bill Detected\n\nBill No: ${
-            responseData.duplicateInfo.billNumber
-          }\nUploaded by: ${
-            responseData.duplicateInfo.uploadedBy
-          }\nUploaded on : ${format(
-            new Date(responseData.duplicateInfo.uploadedAt),
-            "dd MMM yyyy"
-          )}`,
-          { duration: 6000 }
+      if (
+        responseData?.duplicate === true &&
+        Array.isArray(responseData?.duplicates)
+      ) {
+        toast.custom(
+          (t) => (
+            <div
+              className={`${
+                t.visible ? "animate-enter" : "animate-leave"
+              } max-w-md w-full bg-red-50 border border-red-300 rounded-lg p-4 shadow-lg`}
+            >
+              {/* Header */}
+              <div className="flex justify-between items-center mb-2">
+                <h3 className="text-red-700 font-semibold">
+                  {responseData.duplicateCount} Duplicate Bill(s) Detected
+                </h3>
+                <button
+                  onClick={() => toast.dismiss(t.id)}
+                  className="text-red-600 font-bold text-lg leading-none"
+                >
+                  ✕
+                </button>
+              </div>
+
+              {/* Body */}
+              <div className="text-sm text-red-800 space-y-3 max-h-64 overflow-y-auto whitespace-pre-line">
+                {responseData.duplicates.map((bill, index) => (
+                  <div key={index} className="border-b border-red-200 pb-2">
+                    <div>
+                      <strong>{index + 1}. Bill No:</strong> {bill.billNumber}
+                    </div>
+                    <div>Amount: ₹{bill.amount}</div>
+                    <div>Uploaded by: {bill.uploadedBy}</div>
+                    <div>
+                      Uploaded on:{" "}
+                      {format(new Date(bill.uploadedAt), "dd MMM yyyy")}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          ),
+          {
+            duration: Infinity, // 🔥 stays until user closes
+          }
         );
+
         return;
       }
 
-      // 🔴 Conflict (409)
-      if (status === 409) {
-        toast.error(responseData?.message || "Duplicate detected");
-        return;
-      }
-
-      // 🔴 OCR limit reached
-      if (status === 429) {
-        toast.error(responseData?.message || "OCR limit reached");
-        return;
-      }
-
-      // 🔴 Generic fallback
       toast.error(responseData?.message || "Something went wrong");
     } finally {
       setIsSubmitting(false);
+      fetchOCRState();
     }
   };
 
@@ -288,6 +317,7 @@ const EmployeePage = () => {
         displayText += "\n" + "═".repeat(40);
 
         setExtractedText(displayText);
+        console.log(extractedText);
         return;
       }
 
@@ -328,12 +358,6 @@ const EmployeePage = () => {
     } finally {
       setIsExtracting(false);
     }
-  };
-
-  const handleCopyText = () => {
-    navigator.clipboard.writeText(extractedText);
-    setCopied(true);
-    setTimeout(() => setCopied(false), 2000);
   };
 
   const renderFilePreview = (file, index, isExisting = false) => {
@@ -400,7 +424,7 @@ const EmployeePage = () => {
       <div className="max-w-7xl mx-auto mb-8">
         <div className="flex flex-col items-center gap-4">
           <h1 className="text-5xl font-bold text-center bg-linear-to-r from-blue-600 via-indigo-600 to-purple-600 bg-clip-text text-transparent">
-            Employee Management
+            Bill Management
           </h1>
 
           <p className="text-center text-gray-600">
@@ -413,7 +437,7 @@ const EmployeePage = () => {
               <div className="flex items-center gap-3 bg-white px-4 py-2 rounded-xl shadow border border-red-200">
                 <span className="text-sm font-semibold text-gray-700">
                   OCR Paid Mode
-                   {/* STEP-3: Show paid OCR toggle ONLY when free tier is exhausted */}
+                  {/* STEP-3: Show paid OCR toggle ONLY when free tier is exhausted */}
                 </span>
 
                 <button
@@ -457,7 +481,17 @@ const EmployeePage = () => {
           <div className="bg-white border border-gray-200 rounded-xl p-4 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 shadow-sm">
             {/* Left */}
             <div>
-              <p className="text-sm text-gray-500">OCR Usage (This Month)</p>
+              {}
+              <p className="text-sm text-gray-500">
+                OCR Usage{" "}
+                {`${new Date(`${ocrQuota.month}-01`).toLocaleDateString(
+                  "en-US",
+                  {
+                    month: "long",
+                    year: "numeric",
+                  }
+                )}`}
+              </p>
               <p className="text-lg font-semibold text-gray-800">
                 {paidOcrEnabled
                   ? ocrQuota.used
@@ -556,37 +590,7 @@ const EmployeePage = () => {
             </div>
 
             <div className="p-6 overflow-auto max-h-[calc(90vh-100px)]">
-              {/* ================= AUTO EXTRACTED BILL DATA ================= */}
-              {viewFile?.file?.extractedBills?.length > 0 && (
-                <div className="mb-6 border-2 border-green-200 rounded-xl bg-green-50 p-4">
-                  <h4 className="font-semibold text-green-800 mb-3">
-                    ✅ Extracted Bill Details
-                  </h4>
-
-                  {viewFile.file.extractedBills.map((bill, index) => (
-                    <div
-                      key={index}
-                      className="mb-3 p-3 bg-white rounded-lg border border-green-200"
-                    >
-                      <p className="text-sm font-medium">
-                        🧾 Bill {index + 1}
-                        {bill.page ? ` (Page ${bill.page})` : ""}
-                      </p>
-                      <p className="text-sm">
-                        🔢 Bill Number: {bill.billNo ?? "Not detected"}
-                      </p>
-                      <p className="text-sm">
-                        💰 Amount: {bill.amount ?? "Not detected"}
-                      </p>
-                      <p className="text-xs text-gray-600">
-                        Confidence: {bill.confidence}
-                      </p>
-                    </div>
-                  ))}
-                </div>
-              )}
-
-              <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+              <div className="grid grid-cols-1 lg:grid-cols-1 gap-6">
                 <div className="space-y-4">
                   {viewFile.isPdf ? (
                     <div className="space-y-4">
@@ -661,62 +665,13 @@ const EmployeePage = () => {
                     </div>
                   )}
                 </div>
-
-                <div className="border-2 border-gray-200 rounded-xl bg-gray-50">
-                  <div className="bg-gray-100 p-4 flex justify-between items-center border-b-2 border-gray-200">
-                    <h4 className="font-semibold text-gray-800 flex items-center gap-2">
-                      <FileText className="w-5 h-5" />
-                      Extracted Text
-                    </h4>
-                    {extractedText && (
-                      <button
-                        onClick={handleCopyText}
-                        className="text-sm bg-blue-600 text-white px-4 py-2 rounded-lg hover:bg-blue-700 transition-all flex items-center gap-2"
-                      >
-                        {copied ? (
-                          <>
-                            <CheckCircle className="w-4 h-4" />
-                            Copied!
-                          </>
-                        ) : (
-                          <>
-                            <Copy className="w-4 h-4" />
-                            Copy
-                          </>
-                        )}
-                      </button>
-                    )}
-                  </div>
-                  <div className="p-4 max-h-[55vh] overflow-auto">
-                    {isExtracting ? (
-                      <div className="flex items-center justify-center py-12">
-                        <div className="text-center">
-                          <Loader2 className="w-12 h-12 text-blue-600 mx-auto mb-4 animate-spin" />
-                          <p className="text-gray-600">Extracting text...</p>
-                        </div>
-                      </div>
-                    ) : extractedText ? (
-                      <pre className="whitespace-pre-wrap text-sm text-gray-700 font-mono">
-                        {extractedText}
-                      </pre>
-                    ) : (
-                      <div className="flex flex-col items-center justify-center py-12 text-center">
-                        <FileText className="w-16 h-16 text-gray-300 mb-4" />
-                        <p className="text-gray-400">
-                          Click "Extract Text" button to extract text from this
-                          file
-                        </p>
-                      </div>
-                    )}
-                  </div>
-                </div>
               </div>
             </div>
           </div>
         </div>
       )}
 
-      <div className="max-w-7xl mx-auto grid grid-cols-1 lg:grid-cols-3 gap-6">
+      <div className="max-w-7xl mx-auto grid grid-cols-1 lg:grid-cols-1 gap-6">
         <div className="lg:col-span-1">
           <div className="bg-white rounded-2xl shadow-xl p-6 border border-gray-100 sticky top-6">
             <h2 className="text-2xl font-bold mb-6 flex items-center gap-2 text-gray-800">
@@ -735,7 +690,7 @@ const EmployeePage = () => {
 
             <div className="space-y-5">
               <div>
-                <label className="block text-sm font-semibold text-gray-700 mb-2 flex items-center gap-2">
+                <label className="text-sm font-semibold text-gray-700 mb-2 flex items-center gap-2">
                   <User className="w-4 h-4" />
                   Name
                 </label>
@@ -749,7 +704,7 @@ const EmployeePage = () => {
               </div>
 
               <div>
-                <label className="block text-sm font-semibold text-gray-700 mb-2 flex items-center gap-2">
+                <label className="text-sm font-semibold text-gray-700 mb-2 flex items-center gap-2">
                   <Mail className="w-4 h-4" />
                   Email
                 </label>
@@ -764,7 +719,7 @@ const EmployeePage = () => {
               </div>
 
               <div>
-                <label className="block text-sm font-semibold text-gray-700 mb-2 flex items-center gap-2">
+                <label className="text-sm font-semibold text-gray-700 mb-2 flex items-center gap-2">
                   <Phone className="w-4 h-4" />
                   Phone
                 </label>
@@ -779,7 +734,7 @@ const EmployeePage = () => {
               </div>
 
               <div>
-                <label className="block text-sm font-semibold text-gray-700 mb-2 flex items-center gap-2">
+                <label className="text-sm font-semibold text-gray-700 mb-2 flex items-center gap-2">
                   <Upload className="w-4 h-4" />
                   Files {!editId && <span className="text-red-500">*</span>}
                 </label>
@@ -897,6 +852,9 @@ const EmployeePage = () => {
                       Files
                     </th>
                     <th className="p-4 text-center font-semibold text-gray-700">
+                      Bill Data
+                    </th>
+                    <th className="p-4 text-center font-semibold text-gray-700">
                       Actions
                     </th>
                   </tr>
@@ -953,6 +911,46 @@ const EmployeePage = () => {
                           </div>
                         ) : (
                           <span className="text-gray-400 italic">No files</span>
+                        )}
+                      </td>
+                      <td className="p-4 align-top">
+                        {emp.files?.some((f) => f.extractedBills?.length) ? (
+                          <div className="space-y-2 max-h-40 overflow-y-auto">
+                            {emp.files.map((file, fIndex) =>
+                              file.extractedBills?.map((bill, bIndex) => (
+                                <div
+                                  key={`${fIndex}-${bIndex}`}
+                                  className="border border-green-200 bg-green-50 rounded-lg p-2 text-sm"
+                                >
+                                  <p className="font-medium text-gray-800">
+                                    Bill {bIndex + 1}
+                                    {bill.page && (
+                                      <span className="text-xs text-gray-500">
+                                        {" "}
+                                        • Page {bill.page}
+                                      </span>
+                                    )}
+                                  </p>
+
+                                  <p>
+                                    <span className="font-semibold">No:</span>{" "}
+                                    {bill.billNo ?? "—"}
+                                  </p>
+
+                                  <p>
+                                    <span className="font-semibold">
+                                      Amount:
+                                    </span>{" "}
+                                    ₹{bill.amount ?? "—"}
+                                  </p>
+                                </div>
+                              ))
+                            )}
+                          </div>
+                        ) : (
+                          <span className="text-gray-400 italic text-sm">
+                            No extracted data
+                          </span>
                         )}
                       </td>
 

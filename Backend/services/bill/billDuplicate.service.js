@@ -1,10 +1,25 @@
 import BillIndex from "../../models/billIndex.model.js";
 
-export const isDuplicateBill = async (bill) => {
-  if (!bill?.billNo || !bill?.amount) return false;
+export const findDuplicateBillsInSystem = async (bills) => {
+  const duplicates = [];
 
-  return await BillIndex.findOne({
-    billNo: bill.billNo.trim(),
-    amount: bill.amount,
-  });
+  for (const bill of bills) {
+    if (!bill?.billNo || !bill?.amount) continue;
+
+    const exists = await BillIndex.findOne({
+      billNo: bill.billNo.trim(),
+      amount: bill.amount,
+    });
+
+    if (exists) {
+      duplicates.push({
+        billNo: bill.billNo,
+        amount: bill.amount,
+        sourceFile: bill.sourceFile,
+        page: bill.page,
+      });
+    }
+  }
+
+  return duplicates; // ✅ no throw here
 };

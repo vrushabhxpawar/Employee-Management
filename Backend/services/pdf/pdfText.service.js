@@ -4,9 +4,6 @@ import path from "path";
 import os from "os";
 import { extractBillNumber, extractTotalAmount } from "../../parsers/index.js";
 import { extractTextFromImage } from "../vision/visionText.service.js";
-import BillIndex from "../../models/billIndex.model.js";
-
-/* ================= PDF → IMAGE ================= */
 
 const convertPdfToImages = (pdfPath) => {
   return new Promise((resolve, reject) => {
@@ -19,8 +16,6 @@ const convertPdfToImages = (pdfPath) => {
     });
   });
 };
-
-/* ================= MAIN SERVICE ================= */
 
 export const extractTextFromPDF = async (pdfPath) => {
   const prefix = await convertPdfToImages(pdfPath);

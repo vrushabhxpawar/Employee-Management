@@ -25,6 +25,7 @@ export const checkOCRLimit = async (
   // Free tier available
   if (usage.count < usage.limit) {
     return {
+      month,
       allowed: true,
       mode: "free",
       remaining: usage.limit - usage.count,
@@ -37,6 +38,7 @@ export const checkOCRLimit = async (
   // Free exhausted
   if (!isPaidEnabled) {
     return {
+      month,
       allowed: false,
       exhausted: true,
       mode: "blocked",
@@ -47,6 +49,7 @@ export const checkOCRLimit = async (
 
   // Paid mode
   return {
+    month,
     allowed: true,
     mode: "paid",
     pricePerRequest: 0.1, 

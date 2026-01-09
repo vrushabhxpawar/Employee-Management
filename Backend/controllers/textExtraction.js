@@ -10,8 +10,7 @@ import { isPaidOCRAllowed } from "../services/featureFlag.service.js";
 
 export const extractText = asyncHandler(async (req, res) => {
   /* ================= STEP 1: HARD OCR GATE ================= */
-  const ocrEnabled = await isOCRServiceEnabled();
-  if (!ocrEnabled) {
+  if (!(await isOCRServiceEnabled())) {
     return res.status(503).json({
       success: false,
       message: "OCR service is currently disabled. Upload is blocked.",
@@ -40,15 +39,12 @@ export const extractText = asyncHandler(async (req, res) => {
   const filePath = path.join(process.cwd(), "uploads", fileName);
   ensureFileExists(filePath);
 
-  /* ================= STEP 4: PAID OCR CHECK ================= */
+  /* ================= STEP 4: BILLING MODE ================= */
   const paidOCR = await isPaidOCRAllowed();
-  console.log("🔎 PAID OCR FLAG =", paidOCR)
-  /* ================= STEP 5: FREE LIMIT CHECK (ONLY IF NOT PAID) ================= */
   let quota = null;
 
-  if (paidOCR !== true) {
+  if (!paidOCR) {
     quota = await checkOCRLimit();
-    
     if (!quota.allowed) {
       return res.status(429).json({
         success: false,
@@ -60,54 +56,92 @@ export const extractText = asyncHandler(async (req, res) => {
     }
   }
 
+  /* ================= DUPLICATE HELPER ================= */
+  const normalizeBill = (bill) => {
+    return {
+      billNo: bill.billNo?.toString().trim() || null,
+      amount: bill.amount ? parseFloat(bill.amount) : null,
+      page: bill.page || 1,
+    };
+  };
+
+  const findDbDuplicates = async (bills) => {
+    const normalizedBills = bills
+      .map(normalizeBill)
+      .filter((b) => b.billNo && b.amount);
+
+    const billKeyToPdfBill = new Map();
+
+    for (const bill of normalizedBills) {
+      const key = `${bill.billNo}_${bill.amount}`;
+      billKeyToPdfBill.set(key, bill);
+    }
+
+    const existingBills = await BillIndex.find({
+      billKey: { $in: [...billKeyToPdfBill.keys()] },
+    }).populate("sourceEmployee", "name email"); // optional but recommended
+
+    return existingBills.map((dbBill) => {
+      const pdfBill = billKeyToPdfBill.get(dbBill.billKey);
+
+      return {
+        billNo: pdfBill.billNo,
+        amount: pdfBill.amount,
+        page: pdfBill.page,
+
+        // 👇 previous upload info
+        uploadedBy: dbBill.sourceEmployee
+          ? {
+              id: dbBill.sourceEmployee._id,
+              name: dbBill.sourceEmployee.name,
+              email: dbBill.sourceEmployee.email,
+            }
+          : null,
+
+        uploadedAt: dbBill.createdAt,
+      };
+    });
+  };
+
   /* ================= IMAGE FLOW ================= */
   if (fileType === "image") {
     const text = await extractTextFromImage(filePath);
 
-    if (!text || typeof text !== "string" || text.trim().length === 0) {
+    if (!text?.trim()) {
       return res.status(400).json({
         success: false,
         message: "No text could be extracted from the image",
       });
     }
 
-    const extractedData = {
-      bill_number: extractBillNumber(text),
-      total_amount: extractTotalAmount(text),
+    const bill = {
+      billNo: extractBillNumber(text),
+      amount: extractTotalAmount(text),
+      page: 1,
     };
 
-    /* ===== DUPLICATE CHECK (ONLY AFTER OCR SUCCESS) ===== */
-    if (extractedData.bill_number && extractedData.total_amount) {
-      const billKey = `${extractedData.bill_number.trim()}_${
-        extractedData.total_amount
-      }`;
-      const exists = await BillIndex.findOne({ billKey });
-
-      if (exists) {
-        return res.status(409).json({
-          success: false,
-          message: "Duplicate bill detected",
-        });
-      }
-
-      await BillIndex.create({
-        billKey,
-        billNumber: extractedData.bill_number.trim(),
-        amount: extractedData.total_amount,
+    const duplicates = await findDbDuplicates([bill]);
+    if (duplicates.length > 0) {
+      return res.status(409).json({
+        success: false,
+        code: "DUPLICATE_BILLS_IN_SYSTEM",
+        duplicates,
       });
     }
 
-    /* ================= STEP 6: INCREMENT FREE USAGE ================= */
-    if (paidOCR !== true) {
-      await incrementOCRUsage();
-    }
+    await BillIndex.create({
+      billKey: `${bill.billNo}_${bill.amount}`,
+      billNumber: bill.billNo,
+      amount: bill.amount,
+    });
+
+    if (!paidOCR) await incrementOCRUsage();
 
     return res.json({
       success: true,
       type: "image",
       billing: paidOCR ? "paid" : "free",
-      extractedData,
-      rawText: text,
+      extractedData: bill,
       remaining: paidOCR ? null : quota.remaining - 1,
     });
   }
@@ -116,15 +150,29 @@ export const extractText = asyncHandler(async (req, res) => {
   if (fileType === "pdf") {
     const pdfResult = await extractTextFromPDF(filePath);
 
-    if (!pdfResult || !pdfResult.bills) {
+    if (!pdfResult?.bills?.length) {
       return res.status(400).json({
         success: false,
         message: "No text could be extracted from the PDF",
       });
     }
 
-    if (!paidOCR) {
-      await incrementOCRUsage();
+    const duplicates = await findDbDuplicates(pdfResult.bills);
+
+    if (duplicates.length > 0) {
+      return res.status(409).json({
+        success: false,
+        code: "DUPLICATE_BILLS_IN_SYSTEM",
+        duplicates,
+      });
+    }
+
+    for (const bill of pdfResult.bills) {
+      await BillIndex.create({
+        billKey: `${bill.billNo}_${bill.amount}`,
+        billNumber: bill.billNo,
+        amount: bill.amount,
+      });
     }
 
     return res.json({

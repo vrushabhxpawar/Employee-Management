@@ -3,17 +3,9 @@ import asyncHandler from "../middlewares/asyncHandler.js";
 import { generateFileHash } from "../utils/fileHash.util.js";
 import fs from "fs";
 import path from "path";
-import { fileURLToPath } from "url";
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
 import BillIndex from "../models/billIndex.model.js";
-import { extractTextFromPDF } from "../services/pdf/pdfText.service.js";
-import { extractTextFromImage } from "../services/vision/visionText.service.js";
-import { extractBillNumber, extractTotalAmount } from "../parsers/index.js";
 import { extractBillsFromFile } from "../services/extraction/extractBillFromFile.js";
-import { isOCRServiceEnabled } from "../services/featureFlag.service.js";
 import { assertOCRAllowed } from "../services/ocr/ocrGate.service.js";
-import { incrementOCRUsage } from "../services/ocr/ocrLimit.service.js";
 
 const isValidEmail = (email) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email);
 const isValidPhone = (phone) => /^[0-9]{10}$/.test(phone);
@@ -40,11 +32,6 @@ export const createEmployee = asyncHandler(async (req, res) => {
       .status(400)
       .json({ success: false, message: "At least one file required" });
 
-  const existingEmail = await Employee.findOne({ email });
-  if (existingEmail) {
-    res.status(400).json({ message: "Email already exists" });
-  }
-
   /* ================= HELPERS ================= */
   const cleanupFiles = () => {
     req.files.forEach((f) => {
@@ -56,10 +43,11 @@ export const createEmployee = asyncHandler(async (req, res) => {
   const buildBillKey = (billNo, amount) =>
     `${billNo.trim().toLowerCase()}_${amount}`;
 
-  /* ================= PHASE 1: VALIDATE (NO DB WRITES) ================= */
   const seenFileHashes = new Set();
   const seenBillKeys = new Set();
   const validatedFiles = [];
+  const allDuplicates = [];
+  const allBills = []; // ← ADD THIS TO TRACK ALL BILLS
 
   try {
     const ocr = await assertOCRAllowed();
@@ -99,44 +87,79 @@ export const createEmployee = asyncHandler(async (req, res) => {
         if (!bill.billNo || !bill.amount) continue;
 
         const billKey = buildBillKey(bill.billNo, bill.amount);
+        let isDuplicate = false;
+        let duplicateInfo = null;
 
         // duplicate inside same request (multi-bill PDF)
         if (seenBillKeys.has(billKey)) {
-          cleanupFiles();
-          return res.status(409).json({
-            success: false,
-            message: `Duplicate bill in same upload (Bill No: ${bill.billNo})`,
+          isDuplicate = true;
+          duplicateInfo = {
+            type: "same_upload",
+            message: "Duplicate within this upload",
+          };
+
+          allDuplicates.push({
+            billNumber: bill.billNo,
+            amount: bill.amount,
+            page: bill.page,
+            ...duplicateInfo,
           });
-        }
-        seenBillKeys.add(billKey);
+        } else {
+          seenBillKeys.add(billKey);
 
-        // global duplicate (image vs pdf, pdf vs pdf, etc)
-        const billExists = await BillIndex.findOne({ billKey }).populate(
-          "sourceEmployee",
-          "name"
-        );
+          // global duplicate (image vs pdf, pdf vs pdf, etc)
+          const billExists = await BillIndex.findOne({ billKey }).populate(
+            "sourceEmployee",
+            "name"
+          );
 
-        if (billExists) {
-          cleanupFiles();
-          return res.status(409).json({
-            success: false,
-            duplicate: true,
-            message: "Duplicate bill detected",
-            duplicateInfo: {
-              billNumber: bill.billNo,
-              amount: bill.amount,
+          if (billExists) {
+            isDuplicate = true;
+            duplicateInfo = {
+              type: "system_duplicate",
               uploadedBy: billExists.sourceEmployee?.name,
               uploadedAt: billExists.createdAt,
               sourceFile: billExists.sourceFile,
-            },
-          });
+            };
+
+            allDuplicates.push({
+              billNumber: bill.billNo,
+              amount: bill.amount,
+              page: bill.page,
+              ...duplicateInfo,
+            });
+          }
         }
+
+        // Add to allBills array with duplicate status
+        allBills.push({
+          billNumber: bill.billNo,
+          amount: bill.amount,
+          page: bill.page,
+          isDuplicate,
+          duplicateInfo,
+        });
       }
 
       validatedFiles.push({
         file,
         fileHash,
         extractedBills,
+      });
+    }
+
+    // ← CHECK ALL DUPLICATES AT THE END
+    if (allDuplicates.length > 0) {
+      cleanupFiles();
+      return res.status(409).json({
+        success: false,
+        duplicate: true,
+        message: `${allDuplicates.length} duplicate bill(s) detected out of ${allBills.length} total bills`,
+        totalBills: allBills.length,
+        duplicateCount: allDuplicates.length,
+        uniqueCount: allBills.length - allDuplicates.length,
+        allBills: allBills, // ← ALL BILLS WITH DUPLICATE STATUS
+        duplicates: allDuplicates, // ← ONLY DUPLICATE BILLS
       });
     }
 
@@ -177,8 +200,6 @@ export const createEmployee = asyncHandler(async (req, res) => {
   } catch (err) {
     // Always cleanup uploaded files first
     cleanupFiles();
-
-    console.error("Create employee failed:", err);
 
     // OCR quota exceeded
     if (err.statusCode === 429) {
