@@ -1,10 +1,7 @@
 import { extractBillNumber, extractTotalAmount } from "../../parsers/index.js";
 import { extractTextFromImage } from "../vision/visionText.service.js";
 import { extractTextFromPDF } from "../pdf/pdfText.service.js";
-import {
-  checkOCRLimit,
-  incrementOCRUsage,
-} from "../ocr/ocrLimit.service.js";
+import { checkOCRLimit } from "../ocr/ocrLimit.service.js";
 import { isPaidOCRAllowed } from "../featureFlag.service.js";
 
 export const extractBillsFromFile = async (filePath, mimeType) => {
@@ -40,12 +37,6 @@ export const extractBillsFromFile = async (filePath, mimeType) => {
       },
     ];
   }
-
-  // ✅ Increment OCR usage ONCE PER FILE
-  await incrementOCRUsage({
-    mode,
-    price,
-  });
 
   return bills
     .map((b) => ({

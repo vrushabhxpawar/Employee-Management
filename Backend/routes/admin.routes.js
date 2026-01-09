@@ -79,8 +79,8 @@ router.get(
   asyncHandler(async (req, res) => {
     const paidEnabled = await isPaidOCRAllowed();
     const quota = await checkOCRLimit(new Date(), paidEnabled);
-    console.log(quota);
     res.json({
+      month : quota.month,
       mode: quota.mode,
       allowed: quota.allowed,
       exhausted: quota.exhausted ?? false,
