@@ -5,19 +5,120 @@ import { extractTextFromImage } from "../services/vision/visionText.service.js";
 import { extractBillNumber, extractTotalAmount } from "../parsers/index.js";
 import { ensureFileExists } from "../utils/file.util.js";
 import BillIndex from "../models/billIndex.model.js";
-import { isOCRServiceEnabled } from "../services/featureFlag.service.js";
-import { isPaidOCRAllowed } from "../services/featureFlag.service.js";
+import {
+  isOCRServiceEnabled,
+  isPaidOCRAllowed,
+} from "../services/featureFlag.service.js";
+import { incrementOCRUsage } from "../services/ocr/ocrLimit.service.js";
+import { checkOCRLimit } from "../services/ocr/ocrLimit.service.js";
 
-export const extractText = asyncHandler(async (req, res) => {
-  /* ================= STEP 1: HARD OCR GATE ================= */
-  if (!(await isOCRServiceEnabled())) {
-    return res.status(503).json({
+/* ================= DUPLICATE HELPERS ================= */
+
+const normalizeBill = (bill) => ({
+  billNo: bill.billNo?.toString().trim() || null,
+  amount: bill.amount ? parseFloat(bill.amount) : null,
+  page: bill.page || 1,
+});
+
+const findDbDuplicates = async (bills) => {
+  const normalized = bills
+    .map(normalizeBill)
+    .filter((b) => b.billNo && b.amount);
+
+  if (!normalized.length) return [];
+
+  const billKeyMap = new Map();
+  normalized.forEach((b) => billKeyMap.set(`${b.billNo}_${b.amount}`, b));
+
+  const existing = await BillIndex.find({
+    billKey: { $in: [...billKeyMap.keys()] },
+  }).populate("sourceEmployee", "name email");
+
+  return existing.map((dbBill) => {
+    const pdfBill = billKeyMap.get(dbBill.billKey);
+    return {
+      billNo: pdfBill.billNo,
+      amount: pdfBill.amount,
+      page: pdfBill.page,
+      uploadedBy: dbBill.sourceEmployee
+        ? {
+            id: dbBill.sourceEmployee._id,
+            name: dbBill.sourceEmployee.name,
+            email: dbBill.sourceEmployee.email,
+          }
+        : null,
+      uploadedAt: dbBill.createdAt,
+    };
+  });
+};
+
+export const getPdfStatus = asyncHandler(async (req, res) => {
+  const { jobId } = req.params;
+
+  const job = await BillIndex.findById(jobId);
+  if (!job) {
+    return res.status(404).json({
       success: false,
-      message: "OCR service is currently disabled. Upload is blocked.",
+      message: "Job not found",
     });
   }
 
-  /* ================= STEP 2: INPUT VALIDATION ================= */
+  return res.json({
+    success: true,
+    status: job.status,
+    error: job.error || null,
+  });
+});
+
+
+/* ================= BACKGROUND PDF PROCESSOR ================= */
+
+const processPdfInBackground = async (filePath, jobId) => {
+  try {
+    const pdfResult = await extractTextFromPDF(filePath);
+
+    if (!pdfResult?.bills?.length) {
+      await BillIndex.findByIdAndUpdate(jobId, {
+        status: "failed",
+        error: "No bills detected",
+      });
+      return;
+    }
+
+    await BillIndex.insertMany(
+      pdfResult.bills.map((bill) => ({
+        billKey: `${bill.billNo}_${bill.amount}`,
+        billNumber: bill.billNo,
+        amount: bill.amount,
+        sourceFile: path.basename(filePath),
+        status: "completed",
+      })),
+      { ordered: false }
+    );
+
+    await BillIndex.findByIdAndUpdate(jobId, {
+      status: "completed",
+    });
+  } catch (err) {
+    await BillIndex.findByIdAndUpdate(jobId, {
+      status: "failed",
+      error: err.message,
+    });
+  }
+};
+
+/* ================= CONTROLLER ================= */
+
+export const extractText = asyncHandler(async (req, res) => {
+  /* ===== OCR SERVICE GATE ===== */
+  if (!(await isOCRServiceEnabled())) {
+    return res.status(503).json({
+      success: false,
+      message: "OCR service is currently disabled.",
+    });
+  }
+
+  /* ===== INPUT VALIDATION ===== */
   const { fileUrl, fileType } = req.body;
 
   if (!fileUrl || !fileType) {
@@ -34,12 +135,12 @@ export const extractText = asyncHandler(async (req, res) => {
     });
   }
 
-  /* ================= STEP 3: FILE RESOLUTION ================= */
+  /* ===== FILE RESOLUTION ===== */
   const fileName = path.basename(fileUrl);
   const filePath = path.join(process.cwd(), "uploads", fileName);
   ensureFileExists(filePath);
 
-  /* ================= STEP 4: BILLING MODE ================= */
+  /* ===== BILLING CHECK ===== */
   const paidOCR = await isPaidOCRAllowed();
   let quota = null;
 
@@ -56,54 +157,7 @@ export const extractText = asyncHandler(async (req, res) => {
     }
   }
 
-  /* ================= DUPLICATE HELPER ================= */
-  const normalizeBill = (bill) => {
-    return {
-      billNo: bill.billNo?.toString().trim() || null,
-      amount: bill.amount ? parseFloat(bill.amount) : null,
-      page: bill.page || 1,
-    };
-  };
-
-  const findDbDuplicates = async (bills) => {
-    const normalizedBills = bills
-      .map(normalizeBill)
-      .filter((b) => b.billNo && b.amount);
-
-    const billKeyToPdfBill = new Map();
-
-    for (const bill of normalizedBills) {
-      const key = `${bill.billNo}_${bill.amount}`;
-      billKeyToPdfBill.set(key, bill);
-    }
-
-    const existingBills = await BillIndex.find({
-      billKey: { $in: [...billKeyToPdfBill.keys()] },
-    }).populate("sourceEmployee", "name email"); // optional but recommended
-
-    return existingBills.map((dbBill) => {
-      const pdfBill = billKeyToPdfBill.get(dbBill.billKey);
-
-      return {
-        billNo: pdfBill.billNo,
-        amount: pdfBill.amount,
-        page: pdfBill.page,
-
-        // 👇 previous upload info
-        uploadedBy: dbBill.sourceEmployee
-          ? {
-              id: dbBill.sourceEmployee._id,
-              name: dbBill.sourceEmployee.name,
-              email: dbBill.sourceEmployee.email,
-            }
-          : null,
-
-        uploadedAt: dbBill.createdAt,
-      };
-    });
-  };
-
-  /* ================= IMAGE FLOW ================= */
+  /* ================= IMAGE FLOW (SYNC) ================= */
   if (fileType === "image") {
     const text = await extractTextFromImage(filePath);
 
@@ -146,41 +200,21 @@ export const extractText = asyncHandler(async (req, res) => {
     });
   }
 
-  /* ================= PDF FLOW ================= */
+  /* ================= PDF FLOW (ASYNC) ================= */
   if (fileType === "pdf") {
-    const pdfResult = await extractTextFromPDF(filePath);
+    const job = await BillIndex.create({
+      status: "processing",
+      sourceFile: fileName,
+    });
 
-    if (!pdfResult?.bills?.length) {
-      return res.status(400).json({
-        success: false,
-        message: "No text could be extracted from the PDF",
-      });
-    }
+    processPdfInBackground(filePath, job._id);
 
-    const duplicates = await findDbDuplicates(pdfResult.bills);
-
-    if (duplicates.length > 0) {
-      return res.status(409).json({
-        success: false,
-        code: "DUPLICATE_BILLS_IN_SYSTEM",
-        duplicates,
-      });
-    }
-
-    for (const bill of pdfResult.bills) {
-      await BillIndex.create({
-        billKey: `${bill.billNo}_${bill.amount}`,
-        billNumber: bill.billNo,
-        amount: bill.amount,
-      });
-    }
-
-    return res.json({
+    return res.status(202).json({
       success: true,
       type: "pdf",
+      jobId: job._id,
+      message: "PDF uploaded. Processing started.",
       billing: paidOCR ? "paid" : "free",
-      totalBillsDetected: pdfResult.totalBillsDetected,
-      bills: pdfResult.bills,
       remaining: paidOCR ? null : quota.remaining - 1,
     });
   }

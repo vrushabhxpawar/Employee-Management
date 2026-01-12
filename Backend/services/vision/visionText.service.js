@@ -7,7 +7,6 @@ export const extractTextFromImage = async (filePath) => {
 
   const [result] = await visionClient.textDetection(filePath);
 
-  // ✅ OCR WAS EXECUTED — increment here
   if (!paidOCR) {
     await incrementOCRUsage();
   }

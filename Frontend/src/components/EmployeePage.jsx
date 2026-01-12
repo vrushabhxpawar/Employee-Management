@@ -1,3 +1,4 @@
+/* eslint-disable no-unused-vars */
 import { useEffect, useState } from "react";
 import axios from "axios";
 import {
@@ -56,9 +57,6 @@ const EmployeePage = () => {
       );
     } catch (error) {
       const cached = localStorage.getItem("cachedEmployees");
-      if (!cached) {
-        console.log(error.message);
-      }
       if (cached) setEmployees(JSON.parse(cached));
     }
   };
@@ -69,12 +67,31 @@ const EmployeePage = () => {
         axios.get(`${API_BASE}/api/admin/ocr-quota`),
         axios.get(`${API_BASE}/api/admin/ocr-paid-status`),
       ]);
-      setOcrQuota(quotaRes.data);
-      setPaidOcrEnabled(paidRes.data.enabled);
 
-      setOcrCost(quotaRes.data.totalPaid.toFixed(2) || 0);
-    } catch (err) {
-      console.error("Failed to load OCR state", err);
+      const ocrQuota = quotaRes.data;
+      const paidOcrEnabled = paidRes.data.enabled;
+      const ocrCost = Number(ocrQuota.totalPaid || 0).toFixed(2);
+
+      setOcrQuota(ocrQuota);
+      setPaidOcrEnabled(paidOcrEnabled);
+      setOcrCost(ocrCost);
+
+      localStorage.setItem(
+        "cachedOCRState",
+        JSON.stringify({
+          ocrQuota,
+          paidOcrEnabled,
+          ocrCost,
+        })
+      );
+    } catch (error) {
+      const cached = localStorage.getItem("cachedOCRState");
+      if (cached) {
+        const parsed = JSON.parse(cached);
+        setOcrQuota(parsed.ocrQuota);
+        setPaidOcrEnabled(parsed.paidOcrEnabled);
+        setOcrCost(parsed.ocrCost);
+      }
     }
   };
 
@@ -191,8 +208,9 @@ const EmployeePage = () => {
       fetchEmployees();
       fetchOCRState();
     } catch (error) {
-      fetchOCRState()
+      fetchOCRState();
       const responseData = error.response?.data;
+      console.log(responseData);
 
       if (
         responseData?.duplicate === true &&
