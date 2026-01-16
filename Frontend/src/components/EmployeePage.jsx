@@ -17,9 +17,15 @@ import {
   Search,
   Plus,
   AlertCircle,
+  Wifi,
+  WifiOff,
+  RefreshCw,
 } from "lucide-react";
 import toast from "react-hot-toast";
 import { format } from "date-fns";
+import EmployeeService from "../services/employee.service.js";
+import { SYNC_STATUS, db } from "../db/database.js";
+
 
 const API_BASE = import.meta.env.VITE_API_URL;
 const API_URL = `${API_BASE}/api/employees`;
@@ -37,7 +43,7 @@ const EmployeePage = () => {
   const [paidOcrEnabled, setPaidOcrEnabled] = useState(false);
   const [ocrToggleLoading, setOcrToggleLoading] = useState(false);
   const [viewFile, setViewFile] = useState(null);
-  const [extractedText, setExtractedText] = useState("");
+  const [, setExtractedText] = useState("");
   const [isExtracting, setIsExtracting] = useState(false);
   const [form, setForm] = useState({
     name: "",
@@ -46,52 +52,127 @@ const EmployeePage = () => {
   });
   const [ocrCost, setOcrCost] = useState(0);
 
+  // ✅ NEW: Offline state management
+  const [isOnline, setIsOnline] = useState(navigator.onLine);
+  const [, setPendingSyncCount] = useState(0);
+  const [, setIsSyncing] = useState(false);
+
+  // ✅ Monitor online/offline status
+  // ✅ Monitor online/offline status
+  useEffect(() => {
+    const handleOnline = async () => {
+      setIsOnline(true);
+
+      // ✅ Only sync if there are pending changes
+      const count = await EmployeeService.getPendingSyncCount();
+      if (count > 0) {
+        toast.success("Back online! Syncing changes...");
+        await syncData();
+      } else {
+        toast.success("Back online!", { duration: 2000 });
+      }
+    };
+
+    const handleOffline = () => {
+      setIsOnline(false);
+      toast.error("You are offline. Changes will be saved locally.", {
+        duration: 3000,
+      });
+    };
+
+    window.addEventListener("online", handleOnline);
+    window.addEventListener("offline", handleOffline);
+
+    return () => {
+      window.removeEventListener("online", handleOnline);
+      window.removeEventListener("offline", handleOffline);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // ✅ UPDATED: Fetch employees using service
   const fetchEmployees = async () => {
     try {
-      const res = await axios.get(API_URL);
-      setEmployees(res.data.data || res.data);
-      localStorage.setItem(
-        "cachedEmployees",
-        JSON.stringify(res.data.data || res.data)
-      );
+      const data = await EmployeeService.fetchEmployees();
+      setEmployees(data);
     } catch (error) {
-      const cached = localStorage.getItem("cachedEmployees");
-      if (!cached) {
-        console.log(error.message);
-      }
-      if (cached) setEmployees(JSON.parse(cached));
+      console.error("Error fetching employees:", error);
+      toast.error("Failed to load employees");
     }
   };
 
+  // ✅ UPDATED: Fetch OCR state using service
   const fetchOCRState = async () => {
     try {
-      const [quotaRes, paidRes] = await Promise.all([
-        axios.get(`${API_BASE}/api/admin/ocr-quota`),
-        axios.get(`${API_BASE}/api/admin/ocr-paid-status`),
-      ]);
-      setOcrQuota(quotaRes.data);
-      setPaidOcrEnabled(paidRes.data.enabled);
-
-      setOcrCost(quotaRes.data.totalPaid.toFixed(2) || 0);
+      const { quota, paidEnabled } = await EmployeeService.fetchOCRState();
+      setOcrQuota(quota);
+      setPaidOcrEnabled(paidEnabled);
+      setOcrCost(quota?.totalPaid?.toFixed(2) || 0);
     } catch (err) {
       console.error("Failed to load OCR state", err);
     }
   };
 
+  // ✅ NEW: Sync pending changes
+  // ✅ NEW: Sync pending changes
+  const syncData = async () => {
+    if (!navigator.onLine) {
+      toast.error("Cannot sync while offline");
+      return;
+    }
+
+    setIsSyncing(true);
+    try {
+      const result = await EmployeeService.syncPendingChanges();
+
+      // ✅ Only show success if items were actually synced
+      if (result.synced > 0) {
+        toast.success(`${result.synced} change(s) synced successfully`);
+        await fetchEmployees();
+        await updatePendingSyncCount();
+      }
+
+      // ✅ Only show error if items actually failed (not 0)
+      if (result.failed > 0) {
+        toast.error(`${result.failed} change(s) failed to sync`);
+      }
+
+      // ✅ If nothing to sync, do nothing (no toast)
+      if (result.synced === 0 && result.failed === 0) {
+        console.log("No pending changes to sync");
+      }
+    } catch (error) {
+      toast.error("Sync failed");
+      console.error(error);
+    } finally {
+      setIsSyncing(false);
+    }
+  };
+
+  // ✅ NEW: Update pending sync count
+  const updatePendingSyncCount = async () => {
+    const count = await EmployeeService.getPendingSyncCount();
+    setPendingSyncCount(count);
+  };
+
   const handlePaidOcrToggle = async () => {
+    if (!navigator.onLine) {
+      toast.error("Cannot change OCR settings while offline");
+      return;
+    }
+
     try {
       setOcrToggleLoading(true);
-
-      const nextState = !paidOcrEnabled; // 👈 TOGGLE
+      const nextState = !paidOcrEnabled;
 
       const res = await axios.post(`${API_BASE}/api/admin/ocr-toggle-paid`, {
         enabled: nextState,
       });
-      console.log(res);
+
       setPaidOcrEnabled(res.data.enabled);
 
       if (nextState) {
-        alert("Paid OCR enabled. Charges will apply per request.", {
+        toast.success("Paid OCR enabled. Charges will apply per request.", {
           duration: 4000,
         });
       } else {
@@ -162,6 +243,7 @@ const EmployeePage = () => {
     );
   };
 
+  // ✅ UPDATED: Handle submit with offline support
   const handleSubmit = async (e) => {
     e.preventDefault();
     if (!validate()) return;
@@ -180,20 +262,31 @@ const EmployeePage = () => {
 
     try {
       if (editId) {
-        await axios.put(`${API_URL}/${editId}`, formData);
-        toast.success("Employee updated successfully");
+        await EmployeeService.updateEmployee(editId, formData);
+        toast.success(
+          isOnline
+            ? "Employee updated successfully"
+            : "Updated locally. Will sync when online."
+        );
       } else {
-        await axios.post(API_URL, formData);
-        toast.success("Employee created successfully");
+        await EmployeeService.createEmployee(formData);
+        toast.success(
+          isOnline
+            ? "Employee created successfully"
+            : "Created locally. Will sync when online."
+        );
       }
 
       resetForm();
-      fetchEmployees();
-      fetchOCRState();
+      await fetchEmployees();
+      await updatePendingSyncCount();
+      if (isOnline) await fetchOCRState();
     } catch (error) {
-      fetchOCRState();
+      if (isOnline) await fetchOCRState();
+
       const responseData = error.response?.data;
       console.log(error);
+
       if (
         responseData?.duplicate === true &&
         Array.isArray(responseData?.duplicates)
@@ -205,7 +298,6 @@ const EmployeePage = () => {
                 t.visible ? "animate-enter" : "animate-leave"
               } max-w-md w-full bg-red-50 border border-red-300 rounded-lg p-4 shadow-lg`}
             >
-              {/* Header */}
               <div className="flex justify-between items-center mb-2">
                 <h3 className="text-red-700 font-semibold">
                   {responseData.duplicateCount} Duplicate Bill(s) Detected
@@ -218,23 +310,19 @@ const EmployeePage = () => {
                 </button>
               </div>
 
-              {/* Body */}
               <div className="text-sm text-red-800 space-y-3 max-h-64 overflow-y-auto whitespace-pre-line">
                 {responseData.duplicates.map((bill, index) => (
                   <div key={index} className="border-b border-red-200 pb-2">
                     <div>
                       <strong>{index + 1}. Bill No:</strong> {bill.billNumber}
                     </div>
-
                     <div>Amount: ₹{bill.amount}</div>
 
-                    {/* 🔴 Duplicate within SAME PDF */}
                     {bill.type === "same_upload" ? (
                       <div className="text-red-600">
                         ⚠️ {bill.message} (Page {bill.page})
                       </div>
                     ) : (
-                      /* 🔴 Duplicate already in SYSTEM */
                       <>
                         <div>Uploaded by: {bill.uploadedBy}</div>
                         <div>
@@ -250,18 +338,15 @@ const EmployeePage = () => {
               </div>
             </div>
           ),
-          {
-            duration: Infinity, // 🔥 stays until user closes
-          }
+          { duration: Infinity }
         );
-
         return;
       }
 
       toast.error(responseData?.message || "Something went wrong");
     } finally {
       setIsSubmitting(false);
-      fetchOCRState();
+      if (isOnline) await fetchOCRState();
     }
   };
 
@@ -279,15 +364,21 @@ const EmployeePage = () => {
     window.scrollTo({ top: 0, behavior: "smooth" });
   };
 
+  // ✅ UPDATED: Handle delete with offline support
   const handleDelete = async (id) => {
     if (!window.confirm("Delete this employee?")) return;
 
     setIsDeleting(true);
 
     try {
-      await axios.delete(`${API_URL}/${id}`);
-      toast.success("Employee deleted successfully");
-      fetchEmployees();
+      await EmployeeService.deleteEmployee(id);
+      toast.success(
+        isOnline
+          ? "Employee deleted successfully"
+          : "Deleted locally. Will sync when online."
+      );
+      await fetchEmployees();
+      await updatePendingSyncCount();
     } catch (error) {
       toast.error(error.response?.data?.message || "Delete failed");
     } finally {
@@ -304,6 +395,11 @@ const EmployeePage = () => {
   };
 
   const handleExtractText = async (fileUrl, isPdf) => {
+    if (!navigator.onLine) {
+      toast.error("Text extraction requires internet connection");
+      return;
+    }
+
     setIsExtracting(true);
     setExtractedText("");
 
@@ -320,7 +416,6 @@ const EmployeePage = () => {
         }
       );
 
-      /* ================= IMAGE RESPONSE ================= */
       if (!isPdf && response.data.extractedData) {
         const { bill_number, total_amount } = response.data.extractedData;
 
@@ -331,11 +426,9 @@ const EmployeePage = () => {
         displayText += "\n" + "═".repeat(40);
 
         setExtractedText(displayText);
-        console.log(extractedText);
         return;
       }
 
-      /* ================= PDF RESPONSE ================= */
       if (isPdf && response.data.bills?.length) {
         let displayText = "📄 MULTIPLE BILLS DETECTED\n";
         displayText += "═".repeat(40) + "\n\n";
@@ -352,7 +445,6 @@ const EmployeePage = () => {
         return;
       }
 
-      /* ================= FALLBACK ================= */
       setExtractedText(
         "⚠️ No data could be extracted.\n\n" +
           "The file was processed, but no bill data was detected."
@@ -426,11 +518,54 @@ const EmployeePage = () => {
       emp.phone.includes(searchTerm)
   );
 
+  const getSyncStatusBadge = (status) => {
+    if (!status || status === SYNC_STATUS.SYNCED) return null;
+
+    switch (status) {
+      case SYNC_STATUS.PENDING:
+        return (
+          <span className="inline-flex items-center gap-1 px-2 py-1 text-xs bg-yellow-100 text-yellow-800 rounded-full border border-yellow-300">
+            <span className="relative flex h-2 w-2">
+              <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-yellow-400 opacity-75"></span>
+              <span className="relative inline-flex rounded-full h-2 w-2 bg-yellow-500"></span>
+            </span>
+            Pending Sync
+          </span>
+        );
+      case SYNC_STATUS.FAILED:
+        return (
+          <span className="inline-flex items-center gap-1 px-2 py-1 text-xs bg-red-100 text-red-800 rounded-full border border-red-300">
+            ⚠️ Sync Failed
+          </span>
+        );
+      default:
+        return null;
+    }
+  };
+
   const ocrBlocked = ocrQuota?.exhausted && !paidOcrEnabled;
 
   useEffect(() => {
-    fetchEmployees();
-    fetchOCRState();
+    const initializeApp = async () => {
+      await fetchEmployees();
+      await fetchOCRState();
+      await updatePendingSyncCount();
+
+      // ✅ Clean up any orphaned sync items
+      if (navigator.onLine) {
+        const pending = await db.pendingSync.toArray();
+        for (const item of pending) {
+          // Remove items with no data
+          if (!item.data && item.action !== "delete") {
+            await db.pendingSync.delete(item.id);
+            console.log("Cleaned up invalid sync item:", item.id);
+          }
+        }
+        await updatePendingSyncCount();
+      }
+    };
+
+    initializeApp();
   }, []);
 
   return (
@@ -880,7 +1015,10 @@ const EmployeePage = () => {
                       className="border-t border-gray-100 hover:bg-blue-50 transition-all"
                     >
                       <td className="p-4 font-medium text-gray-800">
-                        {emp.name}
+                        <div className="flex items-center gap-2">
+                          {emp.name}
+                          {getSyncStatusBadge(emp.syncStatus)}
+                        </div>
                       </td>
                       <td className="p-4 text-gray-600">{emp.email}</td>
                       <td className="p-4 text-gray-600">{emp.phone}</td>
