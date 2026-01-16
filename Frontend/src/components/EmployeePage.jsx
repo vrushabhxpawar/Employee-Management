@@ -1,4 +1,3 @@
-/* eslint-disable no-unused-vars */
 import { useEffect, useState } from "react";
 import axios from "axios";
 import {
@@ -21,8 +20,6 @@ import {
 } from "lucide-react";
 import toast from "react-hot-toast";
 import { format } from "date-fns";
-import { EmployeeService } from "../services/employee.service";
-import { OCRService } from "../services/ocr.service";
 
 const API_BASE = import.meta.env.VITE_API_URL;
 const API_URL = `${API_BASE}/api/employees`;
@@ -53,8 +50,15 @@ const EmployeePage = () => {
     try {
       const res = await axios.get(API_URL);
       setEmployees(res.data.data || res.data);
+      localStorage.setItem(
+        "cachedEmployees",
+        JSON.stringify(res.data.data || res.data)
+      );
     } catch (error) {
       const cached = localStorage.getItem("cachedEmployees");
+      if (!cached) {
+        console.log(error.message);
+      }
       if (cached) setEmployees(JSON.parse(cached));
     }
   };
@@ -65,42 +69,39 @@ const EmployeePage = () => {
         axios.get(`${API_BASE}/api/admin/ocr-quota`),
         axios.get(`${API_BASE}/api/admin/ocr-paid-status`),
       ]);
+      setOcrQuota(quotaRes.data);
+      setPaidOcrEnabled(paidRes.data.enabled);
 
-      const ocrQuota = quotaRes.data;
-      const paidOcrEnabled = paidRes.data.enabled;
-      const ocrCost = Number(ocrQuota.totalPaid || 0).toFixed(2);
-
-      setOcrQuota(ocrQuota);
-      setPaidOcrEnabled(paidOcrEnabled);
-      setOcrCost(ocrCost);
-
-      localStorage.setItem(
-        "cachedOCRState",
-        JSON.stringify({
-          ocrQuota,
-          paidOcrEnabled,
-          ocrCost,
-        })
-      );
-    } catch (error) {
-      const cached = localStorage.getItem("cachedOCRState");
-      if (cached) {
-        const parsed = JSON.parse(cached);
-        setOcrQuota(parsed.ocrQuota);
-        setPaidOcrEnabled(parsed.paidOcrEnabled);
-        setOcrCost(parsed.ocrCost);
-      }
+      setOcrCost(quotaRes.data.totalPaid.toFixed(2) || 0);
+    } catch (err) {
+      console.error("Failed to load OCR state", err);
     }
   };
 
   const handlePaidOcrToggle = async () => {
     try {
       setOcrToggleLoading(true);
-      const next = !paidOcrEnabled;
-      const updated = await OCRService.togglePaidOCR(next);
-      setPaidOcrEnabled(updated);
-    } catch (e) {
-      toast.error(e.message);
+
+      const nextState = !paidOcrEnabled; // 👈 TOGGLE
+
+      const res = await axios.post(`${API_BASE}/api/admin/ocr-toggle-paid`, {
+        enabled: nextState,
+      });
+      console.log(res);
+      setPaidOcrEnabled(res.data.enabled);
+
+      if (nextState) {
+        alert("Paid OCR enabled. Charges will apply per request.", {
+          duration: 4000,
+        });
+      } else {
+        toast.success("Paid OCR disabled.");
+      }
+      await fetchOCRState();
+      return res.data.enabled;
+    } catch (error) {
+      toast.error(`${error.message}`);
+      return paidOcrEnabled;
     } finally {
       setOcrToggleLoading(false);
     }
@@ -167,72 +168,32 @@ const EmployeePage = () => {
 
     setIsSubmitting(true);
 
+    const formData = new FormData();
+    formData.append("name", form.name);
+    formData.append("email", form.email);
+    formData.append("phone", form.phone);
+
+    selectedFiles.forEach((file) => formData.append("files", file));
+    if (editId) {
+      formData.append("existingFiles", JSON.stringify(filesToKeep));
+    }
+
     try {
-      let result;
-
-      // 🔹 ONLINE → keep existing FormData flow (NO CHANGE)
-      if (navigator.onLine) {
-        const formData = new FormData();
-        formData.append("name", form.name);
-        formData.append("email", form.email);
-        formData.append("phone", form.phone);
-
-        selectedFiles.forEach((file) => formData.append("files", file));
-        if (editId) {
-          formData.append("existingFiles", JSON.stringify(filesToKeep));
-        }
-
-        if (editId) {
-          result = await EmployeeService.updateEmployee(editId, {
-            name: form.name,
-            email: form.email,
-            phone: form.phone,
-          });
-
-          await axios.put(`${API_URL}/${editId}`, formData);
-          toast.success("Employee updated successfully");
-        } else {
-          result = await EmployeeService.createEmployee({
-            name: form.name,
-            email: form.email,
-            phone: form.phone,
-          });
-
-          await axios.post(API_URL, formData);
-          toast.success("Employee created successfully");
-        }
-
-        resetForm();
-        fetchEmployees();
-        fetchOCRState();
-        return;
-      }
-
-      // 🔹 OFFLINE → service handles optimistic update + queue
       if (editId) {
-        result = await EmployeeService.updateEmployee(editId, {
-          name: form.name,
-          email: form.email,
-          phone: form.phone,
-        });
-
-        toast.success("Updated locally. Will sync when online.");
+        await axios.put(`${API_URL}/${editId}`, formData);
+        toast.success("Employee updated successfully");
       } else {
-        result = await EmployeeService.createEmployee({
-          name: form.name,
-          email: form.email,
-          phone: form.phone,
-        });
-
-        toast.success("Created locally. Will sync when online.");
+        await axios.post(API_URL, formData);
+        toast.success("Employee created successfully");
       }
 
-      // 🔥 IMPORTANT: do NOT refetch when offline
       resetForm();
+      fetchEmployees();
+      fetchOCRState();
     } catch (error) {
+      fetchOCRState();
       const responseData = error.response?.data;
-
-      // 🔹 Preserve duplicate bill UI (ONLINE ONLY)
+      console.log(error);
       if (
         responseData?.duplicate === true &&
         Array.isArray(responseData?.duplicates)
@@ -244,6 +205,7 @@ const EmployeePage = () => {
                 t.visible ? "animate-enter" : "animate-leave"
               } max-w-md w-full bg-red-50 border border-red-300 rounded-lg p-4 shadow-lg`}
             >
+              {/* Header */}
               <div className="flex justify-between items-center mb-2">
                 <h3 className="text-red-700 font-semibold">
                   {responseData.duplicateCount} Duplicate Bill(s) Detected
@@ -256,37 +218,50 @@ const EmployeePage = () => {
                 </button>
               </div>
 
+              {/* Body */}
               <div className="text-sm text-red-800 space-y-3 max-h-64 overflow-y-auto whitespace-pre-line">
                 {responseData.duplicates.map((bill, index) => (
                   <div key={index} className="border-b border-red-200 pb-2">
                     <div>
                       <strong>{index + 1}. Bill No:</strong> {bill.billNumber}
                     </div>
+
                     <div>Amount: ₹{bill.amount}</div>
-                    <div>Uploaded by: {bill.uploadedBy}</div>
-                    <div>
-                      Uploaded on:{" "}
-                      {format(new Date(bill.uploadedAt), "dd MMM yyyy")}
-                    </div>
+
+                    {/* 🔴 Duplicate within SAME PDF */}
+                    {bill.type === "same_upload" ? (
+                      <div className="text-red-600">
+                        ⚠️ {bill.message} (Page {bill.page})
+                      </div>
+                    ) : (
+                      /* 🔴 Duplicate already in SYSTEM */
+                      <>
+                        <div>Uploaded by: {bill.uploadedBy}</div>
+                        <div>
+                          Uploaded on:{" "}
+                          {bill.uploadedAt
+                            ? format(new Date(bill.uploadedAt), "dd MMM yyyy")
+                            : "N/A"}
+                        </div>
+                      </>
+                    )}
                   </div>
                 ))}
               </div>
             </div>
           ),
-          { duration: Infinity }
+          {
+            duration: Infinity, // 🔥 stays until user closes
+          }
         );
+
         return;
       }
 
       toast.error(responseData?.message || "Something went wrong");
     } finally {
-      // 🔥 ALWAYS stop loader (online OR offline)
       setIsSubmitting(false);
-
-      // OCR state refresh only makes sense when online
-      if (navigator.onLine) {
-        fetchOCRState();
-      }
+      fetchOCRState();
     }
   };
 
@@ -307,19 +282,16 @@ const EmployeePage = () => {
   const handleDelete = async (id) => {
     if (!window.confirm("Delete this employee?")) return;
 
+    setIsDeleting(true);
+
     try {
-      const res = await EmployeeService.deleteEmployee(id);
-
-      if (res?.offline) {
-        toast.success("Deleted locally. Will sync when online.");
-      } else {
-        toast.success("Employee deleted successfully");
-      }
-
-      // UI auto-updates because cache was updated
-      setEmployees((prev) => prev.filter((emp) => emp._id !== id));
-    } catch (err) {
-      toast.error("Delete failed");
+      await axios.delete(`${API_URL}/${id}`);
+      toast.success("Employee deleted successfully");
+      fetchEmployees();
+    } catch (error) {
+      toast.error(error.response?.data?.message || "Delete failed");
+    } finally {
+      setIsDeleting(false);
     }
   };
 
@@ -447,30 +419,20 @@ const EmployeePage = () => {
     );
   };
 
-  const filteredEmployees = Array.isArray(employees)
-    ? employees.filter(
-        (emp) =>
-          emp.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
-          emp.email.toLowerCase().includes(searchTerm.toLowerCase()) ||
-          emp.phone.includes(searchTerm)
-      )
-    : [];
+  const filteredEmployees = employees.filter(
+    (emp) =>
+      emp.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
+      emp.email.toLowerCase().includes(searchTerm.toLowerCase()) ||
+      emp.phone.includes(searchTerm)
+  );
 
   const ocrBlocked = ocrQuota?.exhausted && !paidOcrEnabled;
 
   useEffect(() => {
-    EmployeeService.getEmployees().then((data) => {
-      setEmployees(data);
-    });
-    OCRService.getOCRState().then((state) => {
-      if (!state) return;
-
-      setOcrQuota(state.quota);
-      setPaidOcrEnabled(state.paidEnabled);
-      setOcrCost(state.cost);
-    });
+    fetchEmployees();
+    fetchOCRState();
   }, []);
-  
+
   return (
     <div className="min-h-screen bg-linear-to-br from-blue-50 via-indigo-50 to-purple-50 p-6">
       <div className="max-w-7xl mx-auto mb-8">

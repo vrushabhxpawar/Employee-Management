@@ -1,15 +1,11 @@
 import { visionClient } from "../../config/vision.config.js";
-import { incrementOCRUsage } from "../ocr/ocrLimit.service.js";
-import { isPaidOCRAllowed } from "../featureFlag.service.js";
 
 export const extractTextFromImage = async (filePath) => {
-  const paidOCR = await isPaidOCRAllowed();
-
-  const [result] = await visionClient.textDetection(filePath);
-
-  if (!paidOCR) {
-    await incrementOCRUsage();
+  try {
+    const [result] = await visionClient.textDetection(filePath);
+    return result.textAnnotations?.[0]?.description || "";
+  } catch (error) {
+    console.error(`OCR error for ${filePath}:`, error.message);
+    return "";
   }
-
-  return result.textAnnotations?.[0]?.description || "";
 };

@@ -6,6 +6,8 @@ import path from "path";
 import BillIndex from "../models/billIndex.model.js";
 import { extractBillsFromFile } from "../services/extraction/extractBillFromFile.js";
 import { assertOCRAllowed } from "../services/ocr/ocrGate.service.js";
+import { isPaidOCRAllowed } from "../services/featureFlag.service.js";
+import { incrementOCRUsage } from "../services/ocr/ocrLimit.service.js";
 
 const isValidEmail = (email) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email);
 const isValidPhone = (phone) => /^[0-9]{10}$/.test(phone);
@@ -27,6 +29,12 @@ export const createEmployee = asyncHandler(async (req, res) => {
   if (!isValidPhone(phone))
     return res.status(400).json({ success: false, message: "Invalid phone" });
 
+  const existingEmail = await Employee.findOne({ email });
+  if (existingEmail) {
+    return res
+      .status(401)
+      .json({ success: false, message: "Email already registered!" });
+  }
   if (!req.files || req.files.length === 0)
     return res
       .status(400)
@@ -47,10 +55,13 @@ export const createEmployee = asyncHandler(async (req, res) => {
   const seenBillKeys = new Set();
   const validatedFiles = [];
   const allDuplicates = [];
-  const allBills = []; // ← ADD THIS TO TRACK ALL BILLS
+  const allBills = [];
+  let totalPagesProcessed = 0; // ✅ Track total pages for OCR
 
   try {
     const ocr = await assertOCRAllowed();
+    const paidOCR = await isPaidOCRAllowed(); // ✅ Get billing mode
+
     for (const file of req.files) {
       const absolutePath = path.resolve(file.path);
       const fileHash = generateFileHash(absolutePath);
@@ -66,10 +77,14 @@ export const createEmployee = asyncHandler(async (req, res) => {
       seenFileHashes.add(fileHash);
 
       // OCR + parse ONCE
+      console.time(`⏱️ Extract bills from ${file.originalname}`);
       const extractedBills = await extractBillsFromFile(
         absolutePath,
         file.mimetype
       );
+      console.timeEnd(`⏱️ Extract bills from ${file.originalname}`);
+
+      totalPagesProcessed += extractedBills.length; // ✅ Count pages
 
       const validBills = extractedBills.filter(
         (b) => b.billNo && b.amount && b.amount > 0
@@ -148,7 +163,19 @@ export const createEmployee = asyncHandler(async (req, res) => {
       });
     }
 
-    // ← CHECK ALL DUPLICATES AT THE END
+    // ✅ INCREMENT OCR BEFORE CHECKING DUPLICATES
+    // This ensures OCR is counted even if duplicates are found
+    if (!paidOCR) {
+      await incrementOCRUsage({ mode: "free", count: totalPagesProcessed });
+    } else {
+      await incrementOCRUsage({
+        mode: "paid",
+        price: 0.1,
+        count: totalPagesProcessed,
+      });
+    }
+
+    // ← CHECK ALL DUPLICATES AFTER OCR INCREMENT
     if (allDuplicates.length > 0) {
       cleanupFiles();
       return res.status(409).json({
@@ -158,8 +185,9 @@ export const createEmployee = asyncHandler(async (req, res) => {
         totalBills: allBills.length,
         duplicateCount: allDuplicates.length,
         uniqueCount: allBills.length - allDuplicates.length,
-        allBills: allBills, // ← ALL BILLS WITH DUPLICATE STATUS
-        duplicates: allDuplicates, // ← ONLY DUPLICATE BILLS
+        allBills: allBills,
+        duplicates: allDuplicates,
+        ocrUsed: totalPagesProcessed, // ✅ Show OCR was used
       });
     }
 
@@ -177,12 +205,13 @@ export const createEmployee = asyncHandler(async (req, res) => {
       })),
     });
 
-    // index bills AFTER employee exists
+    // ✅ PERFORMANCE OPTIMIZATION: Batch insert instead of loop
+    const billsToInsert = [];
     for (const v of validatedFiles) {
       for (const bill of v.extractedBills) {
         if (!bill.billNo || !bill.amount) continue;
 
-        await BillIndex.create({
+        billsToInsert.push({
           billKey: buildBillKey(bill.billNo, bill.amount),
           billNumber: bill.billNo.trim(),
           amount: bill.amount,
@@ -192,16 +221,19 @@ export const createEmployee = asyncHandler(async (req, res) => {
       }
     }
 
+    if (billsToInsert.length > 0) {
+      await BillIndex.insertMany(billsToInsert, { ordered: false });
+    }
+
     return res.status(201).json({
       success: true,
       message: "Employee created successfully",
       data: employee,
+      ocrUsed: totalPagesProcessed, // ✅ Show OCR usage
     });
   } catch (err) {
-    // Always cleanup uploaded files first
     cleanupFiles();
 
-    // OCR quota exceeded
     if (err.statusCode === 429) {
       return res.status(429).json({
         success: false,
@@ -209,7 +241,6 @@ export const createEmployee = asyncHandler(async (req, res) => {
       });
     }
 
-    // Duplicate / validation errors
     if (err.statusCode === 409) {
       return res.status(409).json({
         success: false,
@@ -217,7 +248,6 @@ export const createEmployee = asyncHandler(async (req, res) => {
       });
     }
 
-    // Default server error
     return res.status(500).json({
       success: false,
       message: err.message || "Failed to create employee",

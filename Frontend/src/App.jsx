@@ -2,6 +2,7 @@ import { useEffect } from "react";
 import useNetworkStatus from "./hooks/useNetworkStatus";
 import { syncPendingActions } from "./services/sync.service";
 import EmployeePage from "./components/EmployeePage.jsx";
+import { Toaster } from "react-hot-toast";
 
 function App() {
   const online = useNetworkStatus();
@@ -21,6 +22,7 @@ function App() {
 
   return (
     <>
+    <Toaster position="top-center"/>
       {!online && (
         <div style={{ background: "#4169E1", color: "white", padding: "8px" }}
         className="flex justify-center">

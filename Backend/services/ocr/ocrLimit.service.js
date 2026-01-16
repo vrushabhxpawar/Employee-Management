@@ -1,7 +1,7 @@
 import OCRUsage from "../../models/ocrUsage.model.js";
 
 const getMonthKey = (date = new Date()) => {
-  return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2,"0")}`;
+  return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}`;
 };
 
 export const checkOCRLimit = async (
@@ -30,8 +30,7 @@ export const checkOCRLimit = async (
       mode: "free",
       remaining: usage.limit - usage.count,
       used: usage.count,
-      limit : usage.limit,
-      
+      limit: usage.limit,
     };
   }
 
@@ -52,42 +51,49 @@ export const checkOCRLimit = async (
     month,
     allowed: true,
     mode: "paid",
-    pricePerRequest: 0.1, 
-    used : usage.paidCount,
+    pricePerRequest: 0.1,
+    used: usage.paidCount,
     totalPaid: usage.paidAmount,
-    limit : null,
-    remaining : null,
-    exhausted : true,
+    limit: null,
+    remaining: null,
+    exhausted: true,
   };
 };
 
+// ✅ FIXED: Now accepts and uses the count parameter
 export const incrementOCRUsage = async (
-  { mode = "free", price = 0, date = new Date() } = {} // ✅ THIS IS THE FIX
+  { mode = "free", price = 0, count = 1, date = new Date() } = {}
 ) => {
   const month = getMonthKey(date);
 
+  console.log(`📊 Incrementing OCR: mode=${mode}, count=${count}, price=${price}`);
+
   if (mode === "free") {
-    await OCRUsage.updateOne(
+    const result = await OCRUsage.updateOne(
       { month },
       {
-        $inc: { count: 1 },
+        $inc: { count: count }, // ✅ CHANGED: Was hardcoded to 1, now uses count parameter
         $set: { updatedAt: new Date() },
       },
       { upsert: true }
     );
+    console.log(`✅ Free OCR incremented by ${count}`);
+    return result;
   }
 
   if (mode === "paid") {
-    await OCRUsage.updateOne(
+    const result = await OCRUsage.updateOne(
       { month },
       {
         $inc: {
-          paidCount: 1,
-          paidAmount: price,
+          paidCount: count, // ✅ CHANGED: Was hardcoded to 1, now uses count parameter
+          paidAmount: price * count, // ✅ CHANGED: Multiply price by count
         },
         $set: { updatedAt: new Date() },
       },
       { upsert: true }
     );
+    console.log(`✅ Paid OCR incremented by ${count}, total cost: ${price * count}`);
+    return result;
   }
 };

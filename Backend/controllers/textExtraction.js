@@ -9,8 +9,7 @@ import {
   isOCRServiceEnabled,
   isPaidOCRAllowed,
 } from "../services/featureFlag.service.js";
-import { incrementOCRUsage } from "../services/ocr/ocrLimit.service.js";
-import { checkOCRLimit } from "../services/ocr/ocrLimit.service.js";
+import { incrementOCRUsage, checkOCRLimit } from "../services/ocr/ocrLimit.service.js";
 
 /* ================= DUPLICATE HELPERS ================= */
 
@@ -67,42 +66,83 @@ export const getPdfStatus = asyncHandler(async (req, res) => {
     success: true,
     status: job.status,
     error: job.error || null,
+    data: job.extractedBills || null,
   });
 });
 
-
 /* ================= BACKGROUND PDF PROCESSOR ================= */
 
-const processPdfInBackground = async (filePath, jobId) => {
+const processPdfInBackground = async (filePath, jobId, paidOCR) => {
   try {
+    console.log(`🔄 Starting background PDF processing for job ${jobId}`);
+    
+    // Step 1: Extract text from PDF (optimized with batch OCR)
     const pdfResult = await extractTextFromPDF(filePath);
 
     if (!pdfResult?.bills?.length) {
       await BillIndex.findByIdAndUpdate(jobId, {
         status: "failed",
-        error: "No bills detected",
+        error: "No bills detected in PDF",
       });
+      console.log(`❌ Job ${jobId} failed: No bills detected`);
       return;
     }
 
-    await BillIndex.insertMany(
-      pdfResult.bills.map((bill) => ({
+    console.log(`📄 Extracted ${pdfResult.bills.length} bills from PDF`);
+
+    // Step 2: Check for duplicates
+    const duplicates = await findDbDuplicates(pdfResult.bills);
+
+    if (duplicates.length > 0) {
+      await BillIndex.findByIdAndUpdate(jobId, {
+        status: "failed",
+        error: "duplicate_bills_detected",
+        duplicates: duplicates,
+        extractedBills: pdfResult.bills,
+      });
+      console.log(`⚠️ Job ${jobId} failed: ${duplicates.length} duplicates found`);
+      return;
+    }
+
+    // Step 3: Save all bills to database
+    const billsToInsert = pdfResult.bills
+      .filter(bill => bill.billNo && bill.amount)
+      .map((bill) => ({
         billKey: `${bill.billNo}_${bill.amount}`,
         billNumber: bill.billNo,
         amount: bill.amount,
+        page: bill.page,
+        confidence: bill.confidence,
         sourceFile: path.basename(filePath),
-        status: "completed",
-      })),
-      { ordered: false }
-    );
+      }));
 
+    if (billsToInsert.length > 0) {
+      await BillIndex.insertMany(billsToInsert, { ordered: false });
+    }
+
+    // Step 4: Update job status
     await BillIndex.findByIdAndUpdate(jobId, {
       status: "completed",
+      extractedBills: pdfResult.bills,
+      totalBillsDetected: pdfResult.totalBillsDetected,
+      completedAt: new Date(),
     });
+
+    // Step 5: Increment OCR usage (ONCE for all pages)
+    const totalPages = pdfResult.bills.length;
+    if (!paidOCR) {
+      await incrementOCRUsage({ mode: "free", count: totalPages });
+    } else {
+      await incrementOCRUsage({ mode: "paid", price: 0.1, count: totalPages });
+    }
+
+    console.log(`✅ Job ${jobId} completed successfully. ${totalPages} pages processed.`);
   } catch (err) {
+    console.error(`❌ Job ${jobId} failed:`, err);
     await BillIndex.findByIdAndUpdate(jobId, {
       status: "failed",
       error: err.message,
+      failedAt: new Date(),
     });
   }
 };
@@ -150,9 +190,9 @@ export const extractText = asyncHandler(async (req, res) => {
       return res.status(429).json({
         success: false,
         exhausted: true,
-        pricePerRequest: quota.pricePerRequest,
         resetAt: quota.resetAt,
         message: quota.message,
+        remaining: 0,
       });
     }
   }
@@ -189,7 +229,12 @@ export const extractText = asyncHandler(async (req, res) => {
       amount: bill.amount,
     });
 
-    if (!paidOCR) await incrementOCRUsage();
+    // Increment OCR usage for 1 image
+    if (!paidOCR) {
+      await incrementOCRUsage({ mode: "free", count: 1 });
+    } else {
+      await incrementOCRUsage({ mode: "paid", price: 0.1, count: 1 });
+    }
 
     return res.json({
       success: true,
@@ -202,20 +247,25 @@ export const extractText = asyncHandler(async (req, res) => {
 
   /* ================= PDF FLOW (ASYNC) ================= */
   if (fileType === "pdf") {
+    // Create job record
     const job = await BillIndex.create({
       status: "processing",
       sourceFile: fileName,
+      startedAt: new Date(),
     });
 
-    processPdfInBackground(filePath, job._id);
+    // Start background processing (non-blocking)
+    processPdfInBackground(filePath, job._id, paidOCR).catch(err => {
+      console.error(`Background job ${job._id} error:`, err);
+    });
 
     return res.status(202).json({
       success: true,
       type: "pdf",
       jobId: job._id,
-      message: "PDF uploaded. Processing started.",
+      message: "PDF uploaded. Processing started in background.",
       billing: paidOCR ? "paid" : "free",
-      remaining: paidOCR ? null : quota.remaining - 1,
+      statusUrl: `/api/pdf-status/${job._id}`,
     });
   }
 });
